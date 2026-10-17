@@ -114,7 +114,12 @@
           const meta = state.avail.slots[s.key];
           const r = byKey.get(`${date}|${s.key}`);
           const cls = r ? 'taken' : s.status === 'closed' ? 'closed' : 'free';
-          cell.append(el('div', { class: `aslot ${cls}`, title: `${dateLabel(date)} ${slotLabel(s.key)}` },
+          cell.append(el(r ? 'button' : 'div', {
+            class: `aslot ${cls}`,
+            type: r ? 'button' : null,
+            title: r ? `${dateLabel(date)} ${slotLabel(s.key)} · 눌러서 예약 취소` : `${dateLabel(date)} ${slotLabel(s.key)}`,
+            onclick: r ? () => askCancel(r) : null,
+          },
             el('span', { class: 't' }, `${meta.start} ${meta.label}`),
             el('span', { class: 'who' }, r ? `${r.studentId} ${r.name}` : cls === 'closed' ? '마감' : '비어 있음')));
         }
@@ -152,16 +157,41 @@
           el('td', {}, r.name),
           el('td', {}, r.status === '예약' ? el('span', { class: 'tag' }, '예약') : r.status),
           el('td', {}, r.createdAt || ''),
-          el('td', {}, r.updatedAt || '')));
+          el('td', {}, r.updatedAt || ''),
+          el('td', {}, r.status === '예약'
+            ? el('button', { type: 'button', class: 'btn small danger', onclick: () => askCancel(r) }, '취소')
+            : '')));
       }
       list.append(el('div', { class: 'day-group' },
         el('h3', {}, `${dateLabel(date)} · ${items.length}건`),
         el('div', { class: 'table-wrap' },
           el('table', {},
-            el('thead', {}, el('tr', {}, ...['시간', '학번', '이름', '상태', '신청일시', '수정일시'].map((h) => el('th', {}, h)))),
+            el('thead', {}, el('tr', {}, ...['시간', '학번', '이름', '상태', '신청일시', '수정일시', ''].map((h) => el('th', {}, h)))),
             tbody))));
     }
   }
+
+  // ===================== 담임이 예약 취소 =====================
+  let cancelTarget = null;
+  function askCancel(r) {
+    cancelTarget = r;
+    $('cancelText').textContent = `${dateLabel(r.date)} ${slotLabel(r.slot)} · ${r.studentId} ${r.name} 예약을 취소할까요?`;
+    $('cancelMsg').textContent = '';
+    $('cancelDialog').showModal();
+  }
+  $('cancelOk').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api('adminCancel', { adminPassword: state.password, id: cancelTarget.id });
+      $('cancelDialog').close();
+      await load();
+    } catch (err) {
+      $('cancelMsg').textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ===================== 설정 =====================
   async function loadSettings() {

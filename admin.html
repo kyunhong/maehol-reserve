@@ -7,7 +7,7 @@
   <title>담임 상담 예약 관리</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
   <div class="wrap wide">
@@ -120,6 +120,17 @@
     </section>
   </div>
 
+  <dialog id="cancelDialog">
+    <h2>예약 취소</h2>
+    <p id="cancelText"></p>
+    <p class="hint">취소하면 그 시간이 다시 열립니다. 시트에는 '취소'로 기록이 남고, 학생에게 따로 알림은 가지 않습니다.</p>
+    <div class="msg err" id="cancelMsg"></div>
+    <div class="actions">
+      <button class="btn" type="button" data-close>아니요</button>
+      <button class="btn primary danger-fill" type="button" id="cancelOk">예약 취소</button>
+    </div>
+  </dialog>
+
   <dialog id="conflictDialog">
     <h2>예약이 취소됩니다</h2>
     <p>바꾼 설정에서는 아래 예약 시간이 없어집니다. 저장하면 이 예약들은 <b>취소</b>되니, 해당 학생에게 따로 알려 주세요.</p>
@@ -132,7 +143,7 @@
   </dialog>
 
   <script src="config.js?v=2"></script>
-  <script src="api.js?v=2"></script>
-  <script src="admin.js?v=2"></script>
+  <script src="api.js?v=3"></script>
+  <script src="admin.js?v=3"></script>
 </body>
 </html>

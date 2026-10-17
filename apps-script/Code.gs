@@ -87,6 +87,7 @@ const ACTIONS = {
   adminGetSettings: apiAdminGetSettings_,
   adminSaveSettings: apiAdminSaveSettings_,
   adminChangePassword: apiAdminChangePassword_,
+  adminCancel: apiAdminCancel_,
   // 학년 관리 (전 반 보기 + 담임 비밀번호 정하기)
   masterOverview: apiMasterOverview_,
   masterSetPassword: apiMasterSetPassword_,
@@ -258,6 +259,19 @@ function apiAdminSaveSettings_(p) {
     PropertiesService.getScriptProperties().setProperty('SETTINGS_' + cls, JSON.stringify(next));
     settingsCache_[cls] = next;
     return { saved: true, cancelled: conflicts.length, settings: next };
+  });
+}
+
+/** 담임: 자기 반 학생 예약 취소 (장난 예약 등). 기록은 남기고 상태만 '취소'로 */
+function apiAdminCancel_(p) {
+  const cls = verifyAdmin_(p.cls, p.adminPassword);
+  return withLock_(() => {
+    const target = classRows_(cls).find(r => r.id === String(p.id || '') && r.status === ACTIVE);
+    if (!target) throw new UserError('예약을 찾을 수 없습니다. 이미 취소되었을 수 있어요. 새로고침해 주세요.');
+    const sh = sheet_();
+    sh.getRange(target.row, COL['상태']).setValue(CANCELLED);
+    sh.getRange(target.row, COL['수정일시']).setValue(stamp_() + ' (담임 취소)');
+    return { id: target.id };
   });
 }
 

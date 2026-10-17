@@ -158,6 +158,13 @@
         return sortRows(classRows(read(BOOKINGS_KEY, []), cls)
           .filter((r) => p.all || (r.status === ACTIVE && r.date >= today))).map(strip);
       },
+      adminCancel(p) {
+        const cls = cleanClass(p.cls);
+        const rows = read(BOOKINGS_KEY, []);
+        const t = classRows(rows, cls).find((r) => r.id === p.id && r.status === ACTIVE)
+          || fail('예약을 찾을 수 없습니다. 이미 취소되었을 수 있어요. 새로고침해 주세요.');
+        t.status = '취소'; t.updatedAt = `${stamp()} (담임 취소)`; write(BOOKINGS_KEY, rows); return { id: t.id };
+      },
       adminGetSettings(p) { return settings(cleanClass(p.cls)); },
       adminSaveSettings(p) {
         const cls = cleanClass(p.cls);

@@ -109,6 +109,25 @@ test('담임 비밀번호는 반마다 따로, 해시로만 저장된다', () =>
   assert.match(s.err('adminList', { cls: 3, adminPassword: 'anything' }), /아직 정해지지 않았습니다/);
 });
 
+test('담임은 자기 반 예약만 취소할 수 있다', () => {
+  const s = setup();
+  s.ok('book', { ...student(6, 1), date: '2026-10-19', slot: 'MORNING' });
+  s.ok('book', { ...student(7, 1), date: '2026-10-19', slot: 'MORNING' });
+  const [b6] = s.ok('adminList', { cls: 6, adminPassword: 'teacher6' });
+  const [b7] = s.ok('adminList', { cls: 7, adminPassword: 'teacher7' });
+
+  assert.match(s.err('adminCancel', { cls: 6, adminPassword: 'teacher6', id: b7.id }), /찾을 수 없습니다/);
+  assert.match(s.err('adminCancel', { cls: 7, adminPassword: 'teacher6', id: b7.id }), /틀렸습니다/);
+  s.ok('adminCancel', { cls: 6, adminPassword: 'teacher6', id: b6.id });
+  assert.match(s.err('adminCancel', { cls: 6, adminPassword: 'teacher6', id: b6.id }), /이미 취소/);
+
+  assert.equal(slotStatus(s, 6, '2026-10-19', 'MORNING'), 'open');
+  assert.equal(slotStatus(s, 7, '2026-10-19', 'MORNING'), 'booked');
+  const all = s.ok('adminList', { cls: 6, adminPassword: 'teacher6', all: true });
+  assert.equal(all[0].status, '취소');
+  assert.match(all[0].updatedAt, /담임 취소/);
+});
+
 test('담임 비밀번호 변경, 잠금은 반마다 따로', () => {
   const s = setup();
   assert.match(s.err('adminChangePassword', { cls: 6, adminPassword: 'teacher6', newPassword: '123' }), /6~30자/);
