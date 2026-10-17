@@ -1,0 +1,8 @@
+{
+  "name": "grade-counsel-reserve",
+  "private": true,
+  "description": "2학년 반별 상담 예약 (Apps Script + GitHub Pages)",
+  "scripts": {
+    "test": "node --test test/server.test.js"
+  }
+}

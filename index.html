@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>2학년 상담 예약</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" href="style.css?v=1">
+  <script src="config.js?v=1"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="back need-class" href="./">← 반 다시 고르기</a>
+      <!-- 반을 고른 뒤: 제목·안내 문구는 그 반 설정에서 받아 채운다. 그 전에는 지난번에 받은 값, 처음이면 회색 자리표시 -->
+      <h1 id="title" class="skeleton"></h1>
+      <p id="notice" class="skeleton"></p>
+      <script>
+        (function () {
+          var q = new URLSearchParams(location.search);
+          var n = Number(q.get('반') || q.get('class'));
+          var title = document.getElementById('title');
+          var notice = document.getElementById('notice');
+          if (!(Number.isInteger(n) && n >= 1 && n <= (window.APP_CONFIG || {}).CLASS_COUNT)) {
+            title.textContent = '2학년 상담 예약';
+            notice.textContent = '내 반을 골라 주세요.';
+            return;
+          }
+          document.documentElement.setAttribute('data-cls', n);
+          try {
+            var t = localStorage.getItem('grade-counsel-title-' + n);
+            var s = localStorage.getItem('grade-counsel-notice-' + n);
+            if (t) { title.textContent = t; document.title = t; }
+            if (s !== null) notice.textContent = s;
+          } catch (e) {}
+        })();
+      </script>
+      <div class="demo" id="demoNote" hidden>데모 모드: 예약이 이 브라우저에만 저장됩니다. config.js 에 Apps Script URL 을 넣으면 실제로 동작합니다.</div>
+    </header>
+
+    <!-- 반 고르기 -->
+    <section class="picker no-class" aria-label="반 고르기">
+      <div class="class-grid" id="classGrid"></div>
+    </section>
+
+    <div class="need-class">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tabBook" aria-selected="true">예약하기</button>
+        <button class="tab" role="tab" id="tabMine" aria-selected="false">내 예약 확인 · 취소 · 변경</button>
+      </div>
+
+      <!-- 예약하기 -->
+      <section id="panelBook" class="card">
+        <div class="banner" id="modifyBanner" hidden>
+          <span id="modifyText"></span>
+          <button class="btn small" id="modifyStop">변경 그만두기</button>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--open)"></i>예약 가능</span>
+          <span><i style="background:var(--booked)"></i>예약 완료 · 마감</span>
+        </div>
+        <div id="calendar"><div class="loading">불러오는 중…</div></div>
+      </section>
+
+      <!-- 내 예약 -->
+      <section id="panelMine" class="card" hidden>
+        <form id="lookupForm" autocomplete="off">
+          <div class="row">
+            <label for="lkId">학번</label>
+            <input id="lkId" class="student-id" inputmode="numeric" maxlength="5" required>
+          </div>
+          <div class="row">
+            <label for="lkPw">비밀번호</label>
+            <input id="lkPw" type="password" maxlength="20" required>
+          </div>
+          <div class="actions"><button class="btn primary" type="submit">예약 조회</button></div>
+        </form>
+        <div class="msg" id="lookupMsg"></div>
+        <ul class="list" id="myList"></ul>
+      </section>
+    </div>
+  </div>
+
+  <!-- 예약 입력 -->
+  <dialog id="bookDialog">
+    <form id="bookForm" autocomplete="off">
+      <h2>상담 예약</h2>
+      <p class="picked" id="bookPicked"></p>
+      <div class="row">
+        <label for="bkId">학번</label>
+        <input id="bkId" class="student-id" inputmode="numeric" maxlength="5" required>
+        <div class="hint" id="bkIdHint"></div>
+      </div>
+      <div class="row">
+        <label for="bkName">이름</label>
+        <input id="bkName" maxlength="20" required>
+      </div>
+      <div class="row">
+        <label for="bkPw">비밀번호</label>
+        <input id="bkPw" type="password" maxlength="20" minlength="4" required>
+        <div class="hint">4자 이상. 예약을 취소하거나 바꿀 때 필요해요.</div>
+      </div>
+      <div class="msg err" id="bookMsg"></div>
+      <div class="actions">
+        <button class="btn" type="button" data-close>닫기</button>
+        <button class="btn primary" type="submit">예약하기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 확인 -->
+  <dialog id="confirmDialog">
+    <h2 id="confirmTitle"></h2>
+    <p id="confirmText"></p>
+    <div class="msg err" id="confirmMsg"></div>
+    <div class="actions">
+      <button class="btn" type="button" data-close>아니요</button>
+      <button class="btn primary" type="button" id="confirmOk">확인</button>
+    </div>
+  </dialog>
+
+  <script src="api.js?v=1"></script>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
