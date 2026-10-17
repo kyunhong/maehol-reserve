@@ -21,6 +21,7 @@
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
   const dateLabel = (s) => { const d = parse(s); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAYS[d.getDay()]})`; };
+  const shortDate = (s) => { const d = parse(s); return `${d.getMonth() + 1}/${d.getDate()}`; };
   const slotLabel = (key) => { const s = state.avail && state.avail.slots[key]; return s ? `${s.label} ${s.start}~` : key; };
 
   function el(tag, attrs = {}, ...children) {
@@ -79,7 +80,8 @@
     const byKey = new Map(active.map((r) => [`${r.date}|${r.slot}`, r]));
     const byDate = Object.fromEntries(days.map((d) => [d.date, d]));
     const total = days.reduce((n, d) => n + d.slots.length, 0);
-    $('summary').textContent = `예약 기간 · 예약 ${active.length}건 / 전체 ${total}칸`;
+    const range = days.length ? `${shortDate(days[0].date)} ~ ${shortDate(days[days.length - 1].date)}` : '없음';
+    $('summary').textContent = `예약 기간 ${range} · 예약 ${active.length}건 / 전체 ${total}칸`;
 
     const list = $('list');
     list.innerHTML = '';
@@ -88,7 +90,7 @@
     const cal = el('div', { class: 'admin-cal' });
     cal.append(el('div', { class: 'grid head' }, ...['월', '화', '수', '목', '금'].map((d) => el('div', { class: 'dow' }, d))));
 
-    const monday = parse(today);
+    const monday = parse(days[0].date); // 예약 기간 첫날이 있는 주부터
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
     const last = parse(days[days.length - 1].date);
 
@@ -181,8 +183,9 @@
   function fillSettings(st) {
     $('stTitle').value = st.title || '';
     $('stNotice').value = st.notice || '';
-    $('stDaysAhead').value = st.daysAhead;
-    $('stLastDate').value = st.lastDate || '';
+    $('stStartDate').value = st.startDate;
+    $('stEndDate').value = st.endDate;
+    $('stEndDate').min = st.startDate;
     $('stSlots').innerHTML = '';
     st.slots.forEach(addSlotRow);
     $('stClosed').innerHTML = '';
@@ -213,8 +216,8 @@
     return {
       title: $('stTitle').value.trim(),
       notice: $('stNotice').value.trim(),
-      daysAhead: Number($('stDaysAhead').value),
-      lastDate: $('stLastDate').value,
+      startDate: $('stStartDate').value,
+      endDate: $('stEndDate').value,
       slots: [...$('stSlots').rows].map((tr) => ({
         key: tr.dataset.key,
         label: tr.querySelector('.st-label').value.trim(),
@@ -280,7 +283,7 @@
 
   $('addSlot').addEventListener('click', () => addSlotRow().querySelector('.st-label').focus());
   $('addClosed').addEventListener('click', () => addClosedRow().querySelector('.st-date').focus());
-  $('clearLastDate').addEventListener('click', () => { $('stLastDate').value = ''; });
+  $('stStartDate').addEventListener('change', () => { $('stEndDate').min = $('stStartDate').value; });
   $('stReset').addEventListener('click', () => { state.settings = null; loadSettings(); });
 
   // ===================== 비밀번호 바꾸기 =====================

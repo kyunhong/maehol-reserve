@@ -22,6 +22,9 @@ const CONFIG = {
   // 비밀번호를 연속으로 틀리면 잠시 막음
   MAX_FAILS: 5,
   LOCK_MINUTES: 10,
+
+  DEFAULT_WEEKS: 4, // 반 설정을 저장하기 전: 오늘부터 4주 뒤까지 예약 받기
+  MAX_DAYS_AHEAD: 365, // 예약 끝 날짜는 오늘부터 1년 안
 };
 
 /** 아직 한 번도 설정을 저장하지 않은 반이 쓰는 처음 값 */
@@ -29,8 +32,8 @@ function defaultSettings_(cls) {
   return {
     title: CONFIG.SCHOOL + ' ' + CONFIG.GRADE + '-' + cls + ' 상담 예약',
     notice: '비어 있는 시간을 눌러 예약하세요. 예약할 때 정한 비밀번호로 취소·변경할 수 있어요.',
-    daysAhead: 28, // 오늘부터 며칠 뒤까지 예약을 받을지
-    lastDate: '', // 이 날짜까지만 상담 ('' 이면 제한 없음)
+    startDate: now_().today, // 예약 기간 시작 (지난 날짜면 오늘로 본다)
+    endDate: addDays_(CONFIG.DEFAULT_WEEKS * 7), // 예약 기간 끝 (이 날까지 상담)
     // 시간대: days 는 요일 (1=월 … 5=금). start 시각이 지나면 그날 예약 마감.
     slots: [
       { key: 'MORNING', label: '아침', start: '08:20', days: [1, 2, 3, 4, 5] },
@@ -236,7 +239,7 @@ function apiAdminSaveSettings_(p) {
       if (r.status !== ACTIVE || r.date < today) return false;
       const s = next.slots.find(x => x.key === r.slot);
       return !s || !s.days.includes(weekdayOf_(r.date)) ||
-        Boolean(next.lastDate && r.date > next.lastDate) || Boolean(closed[r.date]);
+        r.date < next.startDate || r.date > next.endDate || Boolean(closed[r.date]);
     });
     if (conflicts.length && !p.confirmCancel) {
       const old = slotMap_(settings_(cls));
@@ -279,7 +282,8 @@ function apiMasterOverview_(p) {
       return {
         cls,
         title: st.title,
-        lastDate: st.lastDate,
+        startDate: st.startDate,
+        endDate: st.endDate,
         hasPassword: Boolean(props.getProperty('ADMIN_HASH_' + cls)),
         slots: slotMap_(st),
         bookings: upcoming.filter(r => r.cls === cls)
@@ -320,14 +324,24 @@ function normalizeSettings_(cls, input, strict) {
   const title = str(input.title, 60) || defaults.title;
   const notice = str(input.notice, 200);
 
-  let daysAhead = Number(input.daysAhead);
-  if (!Number.isInteger(daysAhead) || daysAhead < 1 || daysAhead > 180) {
-    bad('예약 받는 기간은 1~180일 사이로 입력해 주세요.');
-    daysAhead = defaults.daysAhead;
+  // 예약 기간: 시작·끝 날짜. 시작이 지난 날짜면 오늘로 맞춘다 (지난날은 어차피 예약할 수 없음)
+  const { today } = now_();
+  const maxDate = addDays_(CONFIG.MAX_DAYS_AHEAD);
+  let startDate = str(input.startDate, 10);
+  let endDate = str(input.endDate, 10);
+  if (!isDate(startDate)) {
+    if (startDate) bad('예약 시작 날짜를 다시 확인해 주세요.');
+    startDate = today;
   }
-
-  let lastDate = str(input.lastDate, 10);
-  if (lastDate && !isDate(lastDate)) { bad('마지막 상담 날짜를 다시 확인해 주세요.'); lastDate = ''; }
+  if (startDate < today) startDate = today;
+  if (!isDate(endDate)) {
+    if (strict) bad('예약 끝 날짜를 정해 주세요.');
+    endDate = legacyEndDate_(input) || defaults.endDate;
+  }
+  if (endDate < startDate) {
+    bad(endDate < today ? '예약 끝 날짜가 이미 지났습니다.' : '예약 끝 날짜가 시작 날짜보다 빠릅니다.');
+  }
+  if (endDate > maxDate) { bad('예약 끝 날짜는 오늘부터 1년 안으로 정해 주세요.'); endDate = maxDate; }
 
   const keys = {};
   const slots = [];
@@ -361,7 +375,16 @@ function normalizeSettings_(cls, input, strict) {
   });
   closedDates.sort((a, b) => a.date.localeCompare(b.date));
 
-  return { title, notice, daysAhead, lastDate, slots, closedDates };
+  return { title, notice, startDate, endDate, slots, closedDates };
+}
+
+/** 예전 형식(daysAhead: 오늘부터 며칠, lastDate: 마지막 날)으로 저장된 설정의 끝 날짜 */
+function legacyEndDate_(input) {
+  const n = Number(input.daysAhead);
+  if (!Number.isInteger(n) || n < 1) return '';
+  const end = addDays_(Math.min(n, CONFIG.MAX_DAYS_AHEAD));
+  const last = String(input.lastDate || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(last) && last < end ? last : end;
 }
 
 /** { key: { label, start } } */
@@ -594,16 +617,22 @@ function now_() {
   };
 }
 
+/** 오늘부터 n일 뒤 'yyyy-MM-dd' */
+function addDays_(n) {
+  return Utilities.formatDate(new Date(new Date().getTime() + n * 86400000), tz_(), 'yyyy-MM-dd');
+}
+
 function stamp_() { return Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HH:mm:ss'); }
 
-/** 오늘부터 daysAhead 일까지 (lastDate 넘지 않게) [{date, weekday}] */
+/** 예약 기간(startDate~endDate) 가운데 오늘 이후 날짜 [{date, weekday}] */
 function calendarDates_(st) {
   const out = [];
   const base = new Date();
-  for (let i = 0; i <= st.daysAhead; i++) {
+  for (let i = 0; i <= CONFIG.MAX_DAYS_AHEAD; i++) {
     const d = new Date(base.getTime() + i * 86400000);
     const date = Utilities.formatDate(d, tz_(), 'yyyy-MM-dd');
-    if (st.lastDate && date > st.lastDate) break;
+    if (date > st.endDate) break;
+    if (date < st.startDate) continue;
     out.push({
       date,
       weekday: Number(Utilities.formatDate(d, tz_(), 'u')) % 7, // u: 1=월 … 7=일

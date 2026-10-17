@@ -21,8 +21,8 @@
   const defaultSettings = (cls) => ({
     title: `매홀고 ${GRADE}-${cls} 상담 예약`,
     notice: '비어 있는 시간을 눌러 예약하세요. 예약할 때 정한 비밀번호로 취소·변경할 수 있어요.',
-    daysAhead: 28,
-    lastDate: '',
+    startDate: addDays(0),
+    endDate: addDays(28),
     slots: [
       { key: 'MORNING', label: '아침', start: '08:20', days: [1, 2, 3, 4, 5] },
       { key: 'LUNCH', label: '점심시간', start: '13:30', days: [1, 2, 3, 4, 5] },
@@ -43,6 +43,7 @@
   const stamp = () => { const d = new Date(); return `${fmt(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
   const weekdayOf = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).getDay(); };
   const fail = (m) => { throw new Error(m); };
+  function addDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return fmt(d); }
 
   function demoServer() {
     const cleanClass = (v) => {
@@ -63,17 +64,23 @@
       }
       return s;
     };
-    const settings = (cls) => read(SETTINGS_KEY(cls), defaultSettings(cls));
+    const settings = (cls) => {
+      const st = { ...defaultSettings(cls), ...read(SETTINGS_KEY(cls), {}) };
+      if (!st.endDate) st.endDate = defaultSettings(cls).endDate; // 예전 형식 데모 설정
+      if (!st.startDate || st.startDate < addDays(0)) st.startDate = addDays(0);
+      return st;
+    };
     const slotMap = (st) => Object.fromEntries(st.slots.map((s) => [s.key, { label: s.label, start: s.start }]));
     const daySlots = (st, wd) => st.slots.filter((s) => s.days.includes(wd)).map((s) => s.key);
     const holidays = (st) => Object.fromEntries(st.closedDates.map((c) => [c.date, c.reason]));
     const now = () => { const d = new Date(); return { today: fmt(d), nowHm: `${pad(d.getHours())}:${pad(d.getMinutes())}` }; };
     const dates = (st) => {
       const out = [];
-      for (let i = 0; i <= st.daysAhead; i++) {
+      for (let i = 0; i <= 365; i++) {
         const d = new Date(); d.setDate(d.getDate() + i);
         const date = fmt(d);
-        if (st.lastDate && date > st.lastDate) break;
+        if (date > st.endDate) break;
+        if (date < st.startDate) continue;
         out.push({ date, weekday: d.getDay() });
       }
       return out;
@@ -156,7 +163,12 @@
         const cls = cleanClass(p.cls);
         const next = JSON.parse(JSON.stringify(p.settings));
         if (!next.slots.length) fail('상담 시간대를 하나 이상 만들어 주세요.');
-        if (!(next.daysAhead >= 1 && next.daysAhead <= 180)) fail('예약 받는 기간은 1~180일 사이로 입력해 주세요.');
+        const today = addDays(0);
+        if (!next.startDate || next.startDate < today) next.startDate = today;
+        if (!next.endDate) fail('예약 끝 날짜를 정해 주세요.');
+        if (next.endDate < next.startDate) fail(next.endDate < today ? '예약 끝 날짜가 이미 지났습니다.' : '예약 끝 날짜가 시작 날짜보다 빠릅니다.');
+        if (next.endDate > addDays(365)) fail('예약 끝 날짜는 오늘부터 1년 안으로 정해 주세요.');
+        delete next.daysAhead; delete next.lastDate;
         next.title = next.title || defaultSettings(cls).title;
         next.slots.forEach((s, i) => {
           if (!s.label) fail(`${i + 1}번째 시간대의 이름을 입력해 주세요.`);
@@ -167,13 +179,12 @@
         next.closedDates = next.closedDates.filter((c) => c.date)
           .map((c) => ({ date: c.date, reason: c.reason || '휴무' }))
           .sort((a, b) => a.date.localeCompare(b.date));
-        const { today } = now();
         const closed = new Set(next.closedDates.map((c) => c.date));
         const rows = read(BOOKINGS_KEY, []);
         const conflicts = classRows(rows, cls).filter((r) => {
           if (r.status !== ACTIVE || r.date < today) return false;
           const s = next.slots.find((x) => x.key === r.slot);
-          return !s || !s.days.includes(weekdayOf(r.date)) || (next.lastDate && r.date > next.lastDate) || closed.has(r.date);
+          return !s || !s.days.includes(weekdayOf(r.date)) || r.date < next.startDate || r.date > next.endDate || closed.has(r.date);
         });
         if (conflicts.length && !p.confirmCancel) {
           const old = slotMap(settings(cls));
@@ -194,7 +205,7 @@
           classes: Array.from({ length: CLASS_COUNT }, (_, i) => i + 1).map((cls) => {
             const st = settings(cls);
             return {
-              cls, title: st.title, lastDate: st.lastDate, hasPassword: hasPw.includes(cls), slots: slotMap(st),
+              cls, title: st.title, startDate: st.startDate, endDate: st.endDate, hasPassword: hasPw.includes(cls), slots: slotMap(st),
               bookings: sortRows(classRows(rows, cls).filter((r) => r.status === ACTIVE && r.date >= today)).map(strip),
             };
           }),

@@ -86,7 +86,7 @@
 
     root.append(el('div', { class: 'grid' }, ...['월', '화', '수', '목', '금'].map((d) => el('div', { class: 'dow' }, d))));
 
-    const start = parse(today);
+    const start = parse(days[0].date); // 예약 기간 첫날이 있는 주부터
     start.setDate(start.getDate() - ((start.getDay() + 6) % 7)); // 이번 주 월요일
     const last = parse(days[days.length - 1].date);
 

@@ -182,15 +182,51 @@ test('설정 저장: 반마다 따로, 없어지는 예약은 확인 후 취소'
 
   // 잘못된 설정은 거절
   assert.match(s.err('adminSaveSettings', { cls: 6, adminPassword: 'teacher6', settings: { ...next, slots: [] } }), /하나 이상/);
-  assert.match(s.err('adminSaveSettings', { cls: 6, adminPassword: 'teacher6', settings: { ...next, daysAhead: 0 } }), /1~180일/);
+  const bad = (settings) => s.err('adminSaveSettings', { cls: 6, adminPassword: 'teacher6', settings: { ...next, ...settings } });
+  assert.match(bad({ endDate: '' }), /끝 날짜를 정해/);
+  assert.match(bad({ startDate: '2026-10-25', endDate: '2026-10-22' }), /시작 날짜보다 빠릅니다/);
+  assert.match(bad({ endDate: '2026-10-01' }), /이미 지났습니다/);
+  assert.match(bad({ endDate: '2028-01-01' }), /1년 안/);
 });
 
-test('설정의 휴무일·마지막 날짜는 그 반에만 적용된다', () => {
+test('예약 기간: 처음엔 오늘부터 4주, 시작·끝 날짜로 정한다', () => {
+  const s = setup();
+  const st = s.ok('adminGetSettings', { cls: 6, adminPassword: 'teacher6' });
+  assert.equal(st.startDate, '2026-10-19');
+  assert.equal(st.endDate, '2026-11-16');
+
+  s.ok('book', { ...student(6, 1), date: '2026-10-19', slot: 'LUNCH' });
+  // 다음 주부터 받도록 바꾸면 이번 주 예약은 충돌
+  const next = { ...st, startDate: '2026-10-26', endDate: '2026-10-30' };
+  const res = s.ok('adminSaveSettings', { cls: 6, adminPassword: 'teacher6', settings: next });
+  assert.deepEqual(res.conflicts.map((c) => c.date), ['2026-10-19']);
+  s.ok('adminSaveSettings', { cls: 6, adminPassword: 'teacher6', settings: next, confirmCancel: true });
+
+  const a6 = s.ok('availability', { cls: 6 });
+  assert.equal(a6.days[0].date, '2026-10-26');
+  assert.equal(a6.days.at(-1).date, '2026-10-30');
+  assert.match(s.err('book', { ...student(6, 1), date: '2026-10-23', slot: 'LUNCH' }), /예약할 수 없는 날짜/);
+  s.ok('book', { ...student(6, 1), date: '2026-10-26', slot: 'LUNCH' });
+
+  // 시작 날짜가 지나가면 오늘로 보인다
+  const later = loadServer({ now: '2026-10-28T07:00', props: Object.fromEntries(s.properties) });
+  assert.equal(later.ok('adminGetSettings', { cls: 6, adminPassword: 'teacher6' }).startDate, '2026-10-28');
+});
+
+test('예전 형식(daysAhead·lastDate)으로 저장된 설정도 읽는다', () => {
+  const old = { title: '예전', notice: '', daysAhead: 28, lastDate: '2026-11-06', slots: [{ key: 'A', label: '아침', start: '08:20', days: [1] }], closedDates: [] };
+  const s = loadServer({ props: { SETTINGS_6: JSON.stringify(old) } });
+  const a = s.ok('availability', { cls: 6 });
+  assert.equal(a.days[0].date, '2026-10-19');
+  assert.equal(a.days.at(-1).date, '2026-11-02'); // 11/6 전 마지막 월요일
+});
+
+test('설정의 휴무일·끝 날짜는 그 반에만 적용된다', () => {
   const s = setup();
   const st = s.ok('adminGetSettings', { cls: 6, adminPassword: 'teacher6' });
   s.ok('adminSaveSettings', {
     cls: 6, adminPassword: 'teacher6',
-    settings: { ...st, lastDate: '2026-10-22', closedDates: [{ date: '2026-10-20', reason: '모의고사' }] },
+    settings: { ...st, endDate: '2026-10-22', closedDates: [{ date: '2026-10-20', reason: '모의고사' }] },
   });
   const a6 = s.ok('availability', { cls: 6 });
   assert.equal(a6.days.at(-1).date, '2026-10-22');
