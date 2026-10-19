@@ -128,6 +128,55 @@ test('담임은 자기 반 예약만 취소할 수 있다', () => {
   assert.match(all[0].updatedAt, /담임 취소/);
 });
 
+test('담임이 시간대 한 칸을 막고 다시 열 수 있다 (자기 반만)', () => {
+  const s = setup();
+  const t6 = { cls: 6, adminPassword: 'teacher6' };
+  s.ok('adminBlock', { ...t6, date: '2026-10-22', slot: 'LUNCH' });
+  assert.equal(slotStatus(s, 6, '2026-10-22', 'LUNCH'), 'blocked');
+  assert.equal(slotStatus(s, 7, '2026-10-22', 'LUNCH'), 'open');
+  assert.match(s.err('book', { ...student(6, 1), date: '2026-10-22', slot: 'LUNCH' }), /예약을 받지 않는 시간/);
+  s.ok('book', { ...student(7, 1), date: '2026-10-22', slot: 'LUNCH' });
+
+  // 다른 시간으로 변경하는 것도 막힌다
+  s.ok('book', { ...student(6, 2), date: '2026-10-21', slot: 'LUNCH' });
+  const [mine] = s.ok('myBookings', student(6, 2));
+  assert.match(s.err('modify', { ...student(6, 2), id: mine.id, date: '2026-10-22', slot: 'LUNCH' }), /예약을 받지 않는/);
+
+  // 예약 있는 칸·없는 시간·다른 반 비번은 거절
+  assert.match(s.err('adminBlock', { ...t6, date: '2026-10-21', slot: 'LUNCH' }), /먼저 예약을 취소/);
+  assert.match(s.err('adminBlock', { ...t6, date: '2026-10-20', slot: 'AFTER_EARLY' }), /막을 수 없는/); // 화요일엔 없는 시간대
+  assert.match(s.err('adminBlock', { cls: 7, adminPassword: 'teacher6', date: '2026-10-22', slot: 'MORNING' }), /틀렸습니다/);
+
+  // 설정 탭 저장(막은 칸 없이 보냄)에도 막은 칸은 그대로
+  const { blocked, ...st } = s.ok('adminGetSettings', t6);
+  assert.deepEqual(blocked, [{ date: '2026-10-22', slot: 'LUNCH' }]);
+  s.ok('adminSaveSettings', { ...t6, settings: { ...st, title: '바꿈' } });
+  assert.equal(slotStatus(s, 6, '2026-10-22', 'LUNCH'), 'blocked');
+
+  // 다시 열기
+  s.ok('adminBlock', { ...t6, date: '2026-10-22', slot: 'LUNCH', blocked: false });
+  assert.equal(slotStatus(s, 6, '2026-10-22', 'LUNCH'), 'open');
+  s.ok('book', { ...student(6, 1), date: '2026-10-22', slot: 'LUNCH' });
+});
+
+test('시간대 끝나는 시각은 선택, 있으면 시작보다 늦어야 한다', () => {
+  const s = setup();
+  const t6 = { cls: 6, adminPassword: 'teacher6' };
+  const st = s.ok('adminGetSettings', t6);
+  assert.equal(st.slots[0].end, '');
+  const withEnd = (end) => ({ ...st, slots: st.slots.map((x) => (x.key === 'MORNING' ? { ...x, end } : x)) });
+
+  assert.match(s.err('adminSaveSettings', { ...t6, settings: withEnd('08:10') }), /끝나는 시각은 시작 시각보다 늦어야/);
+  s.ok('adminSaveSettings', { ...t6, settings: withEnd('08:40') });
+  assert.deepEqual(s.ok('availability', { cls: 6 }).slots.MORNING, { label: '아침', start: '08:20', end: '08:40' });
+  assert.equal(s.ok('availability', { cls: 7 }).slots.MORNING.end, '');
+
+  s.ok('book', { ...student(6, 1), date: '2026-10-19', slot: 'MORNING' });
+  s.ok('book', { ...student(6, 2), date: '2026-10-19', slot: 'LUNCH' });
+  const rows = s.sheet('예약').data.slice(1).map((r) => r[4]);
+  assert.deepEqual(rows, ['아침 (08:20~08:40)', '점심시간 (13:30~)']);
+});
+
 test('담임 비밀번호 변경, 잠금은 반마다 따로', () => {
   const s = setup();
   assert.match(s.err('adminChangePassword', { cls: 6, adminPassword: 'teacher6', newPassword: '123' }), /6~30자/);

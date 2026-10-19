@@ -59,7 +59,7 @@ header p { margin: 0; color: var(--muted); }
 .slot small { display: block; font-size: .7rem; opacity: .85; }
 .slot.open { background: var(--open-weak); color: var(--open); font-weight: 600; }
 .slot.open:hover { background: var(--open); color: #fff; }
-.slot.booked, .slot.closed { background: var(--booked-weak); color: var(--booked); cursor: not-allowed; }
+.slot.booked, .slot.closed, .slot.blocked { background: var(--booked-weak); color: var(--booked); cursor: not-allowed; }
 .slot.booked { text-decoration: line-through; }
 .week + .week { margin-top: 6px; }
 form .row { margin-bottom: 12px; }
@@ -207,3 +207,8 @@ button.aslot { width: 100%; border-top: 0; border-right: 0; border-bottom: 0; fo
 button.aslot.taken:hover { background: #fde8e8; border-left-color: var(--danger); }
 button.aslot.taken:hover .who { color: var(--danger); }
 .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* 담임이 막아 둔 칸 */
+.aslot.blocked { background: repeating-linear-gradient(135deg, var(--booked-weak) 0 6px, #fff 6px 12px); border-left-color: var(--booked); }
+.aslot.blocked .who { color: var(--muted); }
+button.aslot.free:hover, button.aslot.blocked:hover { border-left-color: var(--primary); background: var(--primary-weak); }

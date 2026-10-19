@@ -94,7 +94,7 @@
       if (filter && c.cls !== filter) continue;
       for (const b of c.bookings) {
         const s = c.slots[b.slot];
-        rows.push({ ...b, start: s ? s.start : '', slotText: s ? `${s.label} ${s.start}~` : b.slot });
+        rows.push({ ...b, start: s ? s.start : '', slotText: s ? `${s.label} ${s.start}~${s.end || ''}` : b.slot });
       }
     }
     rows.sort((a, b) => (a.date + a.start + String(a.cls).padStart(2, '0')).localeCompare(b.date + b.start + String(b.cls).padStart(2, '0')));

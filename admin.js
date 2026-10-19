@@ -22,7 +22,8 @@
   const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
   const dateLabel = (s) => { const d = parse(s); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAYS[d.getDay()]})`; };
   const shortDate = (s) => { const d = parse(s); return `${d.getMonth() + 1}/${d.getDate()}`; };
-  const slotLabel = (key) => { const s = state.avail && state.avail.slots[key]; return s ? `${s.label} ${s.start}~` : key; };
+  const timeText = (s) => `${s.start}~${s.end || ''}`; // 08:20~08:40 또는 08:20~
+  const slotLabel = (key) => { const s = state.avail && state.avail.slots[key]; return s ? `${s.label} ${timeText(s)}` : key; };
 
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
@@ -81,7 +82,7 @@
     const byDate = Object.fromEntries(days.map((d) => [d.date, d]));
     const total = days.reduce((n, d) => n + d.slots.length, 0);
     const range = days.length ? `${shortDate(days[0].date)} ~ ${shortDate(days[days.length - 1].date)}` : '없음';
-    $('summary').textContent = `예약 기간 ${range} · 예약 ${active.length}건 / 전체 ${total}칸`;
+    $('summary').textContent = `예약 기간 ${range} · 예약 ${active.length}건 / 전체 ${total}칸 · 빈 칸을 누르면 그 시간을 막고, 막은 칸을 누르면 다시 엽니다.`;
 
     const list = $('list');
     list.innerHTML = '';
@@ -113,15 +114,19 @@
         for (const s of info.slots) {
           const meta = state.avail.slots[s.key];
           const r = byKey.get(`${date}|${s.key}`);
-          const cls = r ? 'taken' : s.status === 'closed' ? 'closed' : 'free';
-          cell.append(el(r ? 'button' : 'div', {
+          const cls = r ? 'taken' : s.status === 'closed' ? 'closed' : s.status === 'blocked' ? 'blocked' : 'free';
+          const when = `${dateLabel(date)} ${slotLabel(s.key)}`;
+          // 예약 칸 → 취소, 빈 칸 → 막기, 막은 칸 → 다시 열기, 지난·휴무 칸 → 누를 수 없음
+          const action = { taken: () => askCancel(r), free: () => askBlock(date, s.key, true), blocked: () => askBlock(date, s.key, false) }[cls];
+          const hint = { taken: '눌러서 예약 취소', free: '눌러서 이 시간 막기', blocked: '눌러서 다시 열기' }[cls];
+          cell.append(el(action ? 'button' : 'div', {
             class: `aslot ${cls}`,
-            type: r ? 'button' : null,
-            title: r ? `${dateLabel(date)} ${slotLabel(s.key)} · 눌러서 예약 취소` : `${dateLabel(date)} ${slotLabel(s.key)}`,
-            onclick: r ? () => askCancel(r) : null,
+            type: action ? 'button' : null,
+            title: hint ? `${when} · ${hint}` : when,
+            onclick: action || null,
           },
-            el('span', { class: 't' }, `${meta.start} ${meta.label}`),
-            el('span', { class: 'who' }, r ? `${r.studentId} ${r.name}` : cls === 'closed' ? '마감' : '비어 있음')));
+            el('span', { class: 't' }, `${timeText(meta)} ${meta.label}`),
+            el('span', { class: 'who' }, r ? `${r.studentId} ${r.name}` : { closed: '마감', blocked: '막음', free: '비어 있음' }[cls])));
         }
         week.append(cell);
       }
@@ -171,27 +176,54 @@
     }
   }
 
-  // ===================== 담임이 예약 취소 =====================
-  let cancelTarget = null;
-  function askCancel(r) {
-    cancelTarget = r;
-    $('cancelText').textContent = `${dateLabel(r.date)} ${slotLabel(r.slot)} · ${r.studentId} ${r.name} 예약을 취소할까요?`;
-    $('cancelMsg').textContent = '';
-    $('cancelDialog').showModal();
+  // ===================== 예약 취소 · 시간 막기 · 다시 열기 =====================
+  let pendingAction = null;
+  function askAction({ title, text, hint, ok, danger, run }) {
+    pendingAction = run;
+    $('actionTitle').textContent = title;
+    $('actionText').textContent = text;
+    $('actionHint').textContent = hint;
+    $('actionOk').textContent = ok;
+    $('actionOk').classList.toggle('danger-fill', Boolean(danger));
+    $('actionMsg').textContent = '';
+    $('actionDialog').showModal();
   }
-  $('cancelOk').addEventListener('click', async (e) => {
+  $('actionOk').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
-      await api('adminCancel', { adminPassword: state.password, id: cancelTarget.id });
-      $('cancelDialog').close();
+      await pendingAction();
+      $('actionDialog').close();
       await load();
     } catch (err) {
-      $('cancelMsg').textContent = err.message;
+      $('actionMsg').textContent = err.message;
     } finally {
       btn.disabled = false;
     }
   });
+
+  function askCancel(r) {
+    askAction({
+      title: '예약 취소',
+      text: `${dateLabel(r.date)} ${slotLabel(r.slot)} · ${r.studentId} ${r.name} 예약을 취소할까요?`,
+      hint: "취소하면 그 시간이 다시 열립니다. 시트에는 '취소'로 기록이 남고, 학생에게 따로 알림은 가지 않습니다.",
+      ok: '예약 취소',
+      danger: true,
+      run: () => api('adminCancel', { adminPassword: state.password, id: r.id }),
+    });
+  }
+
+  function askBlock(date, slot, block) {
+    askAction({
+      title: block ? '이 시간 막기' : '다시 열기',
+      text: `${dateLabel(date)} ${slotLabel(slot)}`,
+      hint: block
+        ? '막으면 학생 화면에 "마감"으로 보이고 예약할 수 없습니다. 다시 누르면 열 수 있습니다.'
+        : '다시 열면 학생이 이 시간에 예약할 수 있습니다.',
+      ok: block ? '막기' : '다시 열기',
+      run: () => api('adminBlock', { adminPassword: state.password, date, slot, blocked: block }),
+    });
+  }
 
   // ===================== 설정 =====================
   async function loadSettings() {
@@ -222,10 +254,11 @@
     st.closedDates.forEach(addClosedRow);
   }
 
-  function addSlotRow(s = { key: '', label: '', start: '', days: [1, 2, 3, 4, 5] }) {
+  function addSlotRow(s = { key: '', label: '', start: '', end: '', days: [1, 2, 3, 4, 5] }) {
     const tr = el('tr', { 'data-key': s.key || '' },
       el('td', {}, el('input', { class: 'st-label', value: s.label, maxlength: 20, placeholder: '예) 점심시간', 'aria-label': '시간대 이름' })),
       el('td', {}, el('input', { class: 'st-start', type: 'time', value: s.start, 'aria-label': '시작 시각' })),
+      el('td', {}, el('input', { class: 'st-end', type: 'time', value: s.end || '', 'aria-label': '끝나는 시각 (선택)' })),
       ...DAY_NAMES.map((name, i) => el('td', { class: 'center' },
         el('input', { type: 'checkbox', class: 'st-day', value: i + 1, checked: s.days.includes(i + 1), 'aria-label': `${name}요일` }))),
       el('td', {}, el('button', { type: 'button', class: 'btn small danger', onclick: () => tr.remove() }, '삭제')));
@@ -252,6 +285,7 @@
         key: tr.dataset.key,
         label: tr.querySelector('.st-label').value.trim(),
         start: tr.querySelector('.st-start').value,
+        end: tr.querySelector('.st-end').value,
         days: [...tr.querySelectorAll('.st-day')].filter((c) => c.checked).map((c) => Number(c.value)),
       })),
       closedDates: [...$('stClosed').rows]

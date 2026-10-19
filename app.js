@@ -21,9 +21,10 @@
   const pad = (n) => String(n).padStart(2, '0');
   const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const dateLabel = (s) => { const d = parse(s); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAYS[d.getDay()]})`; };
+  const timeText = (s) => `${s.start}~${s.end || ''}`; // 08:20~08:40 또는 08:20~
   const slotLabel = (key) => {
     const s = state.data && state.data.slots[key];
-    return s ? `${s.label} ${s.start}~` : key;
+    return s ? `${s.label} ${timeText(s)}` : key;
   };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -109,7 +110,7 @@
             disabled: s.status !== 'open',
             title: `${dateLabel(key)} ${slotLabel(s.key)}`,
             onclick: () => pickSlot(key, s.key),
-          }, text, el('small', {}, `${meta.start}~`)));
+          }, text, el('small', {}, timeText(meta))));
         }
         week.append(cell);
       }

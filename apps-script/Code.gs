@@ -88,6 +88,7 @@ const ACTIONS = {
   adminSaveSettings: apiAdminSaveSettings_,
   adminChangePassword: apiAdminChangePassword_,
   adminCancel: apiAdminCancel_,
+  adminBlock: apiAdminBlock_,
   // 학년 관리 (전 반 보기 + 담임 비밀번호 정하기)
   masterOverview: apiMasterOverview_,
   masterSetPassword: apiMasterSetPassword_,
@@ -125,6 +126,7 @@ function apiAvailability_(p) {
 
   const st = settings_(cls);
   const slotMap = slotMap_(st);
+  const blocked = blockedSet_(st);
   const days = calendarDates_(st).map(d => {
     const keys = daySlots_(st, d.weekday);
     const holiday = holidays[d.date] || null;
@@ -137,6 +139,7 @@ function apiAvailability_(p) {
         if (holiday) status = 'closed';
         else if (d.date === today && nowHm >= slotMap[key].start) status = 'closed';
         else if (booked.has(d.date + '|' + key)) status = 'booked';
+        else if (blocked[d.date + '|' + key]) status = 'blocked'; // 담임이 막아 둔 칸 (학생에게는 '마감')
         return { key, status };
       }),
     };
@@ -231,7 +234,9 @@ function apiAdminGetSettings_(p) {
  */
 function apiAdminSaveSettings_(p) {
   const cls = verifyAdmin_(p.cls, p.adminPassword);
-  const next = normalizeSettings_(cls, p.settings || {}, true);
+  const input = Object.assign({}, p.settings || {});
+  if (!Array.isArray(input.blocked)) input.blocked = settings_(cls).blocked; // 설정 탭은 막은 칸을 보내지 않으니 그대로 둔다
+  const next = normalizeSettings_(cls, input, true);
   return withLock_(() => {
     const { today } = now_();
     const closed = {};
@@ -247,7 +252,7 @@ function apiAdminSaveSettings_(p) {
       return {
         saved: false,
         conflicts: conflicts.map(r => Object.assign(publicView_(r), {
-          slotText: old[r.slot] ? old[r.slot].label + ' ' + old[r.slot].start + '~' : r.slot,
+          slotText: old[r.slot] ? old[r.slot].label + ' ' + timeText_(old[r.slot]) : r.slot,
         })),
       };
     }
@@ -256,10 +261,14 @@ function apiAdminSaveSettings_(p) {
       sh.getRange(r.row, COL['상태']).setValue(CANCELLED);
       sh.getRange(r.row, COL['수정일시']).setValue(stamp_() + ' (설정 변경으로 취소)');
     });
-    PropertiesService.getScriptProperties().setProperty('SETTINGS_' + cls, JSON.stringify(next));
-    settingsCache_[cls] = next;
+    saveSettings_(cls, next);
     return { saved: true, cancelled: conflicts.length, settings: next };
   });
+}
+
+function saveSettings_(cls, st) {
+  PropertiesService.getScriptProperties().setProperty('SETTINGS_' + cls, JSON.stringify(st));
+  settingsCache_[cls] = st;
 }
 
 /** 담임: 자기 반 학생 예약 취소 (장난 예약 등). 기록은 남기고 상태만 '취소'로 */
@@ -272,6 +281,32 @@ function apiAdminCancel_(p) {
     sh.getRange(target.row, COL['상태']).setValue(CANCELLED);
     sh.getRange(target.row, COL['수정일시']).setValue(stamp_() + ' (담임 취소)');
     return { id: target.id };
+  });
+}
+
+/**
+ * 담임: 특정 날짜의 특정 시간대 한 칸 막기 / 다시 열기 (blocked=false).
+ * 예약이 있는 칸은 막을 수 없다 (먼저 예약을 취소).
+ */
+function apiAdminBlock_(p) {
+  const cls = verifyAdmin_(p.cls, p.adminPassword);
+  const date = String(p.date || '');
+  const slot = String(p.slot || '');
+  const block = p.blocked !== false;
+  return withLock_(() => {
+    const st = settings_(cls);
+    const key = date + '|' + slot;
+    let blocked = st.blocked.filter(b => b.date + '|' + b.slot !== key);
+    if (block) {
+      const day = calendarDates_(st).find(d => d.date === date);
+      if (!day || !daySlots_(st, day.weekday).includes(slot)) throw new UserError('막을 수 없는 시간입니다. 새로고침해 주세요.');
+      const taken = classRows_(cls).some(r => r.status === ACTIVE && r.date === date && r.slot === slot);
+      if (taken) throw new UserError('예약이 있는 시간입니다. 먼저 예약을 취소해 주세요.');
+      blocked = blocked.concat([{ date, slot }]);
+    }
+    const next = normalizeSettings_(cls, Object.assign({}, st, { blocked }), false);
+    saveSettings_(cls, next);
+    return { date, slot, blocked: block };
   });
 }
 
@@ -362,14 +397,19 @@ function normalizeSettings_(cls, input, strict) {
   (Array.isArray(input.slots) ? input.slots : []).forEach((x, i) => {
     const label = str(x && x.label, 20);
     const start = str(x && x.start, 5);
+    let end = str(x && x.end, 5); // 끝나는 시각 (선택, '' 이면 표시 안 함)
     const days = [...new Set((Array.isArray(x && x.days) ? x.days : []).map(Number))]
       .filter(d => d >= 1 && d <= 5).sort();
     if (!label) return bad((i + 1) + '번째 시간대의 이름을 입력해 주세요.');
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start)) return bad(label + ' 시간대의 시작 시각을 다시 확인해 주세요.');
+    if (end && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(end) || end <= start)) {
+      bad(label + ' 시간대의 끝나는 시각은 시작 시각보다 늦어야 합니다.');
+      end = '';
+    }
     let key = str(x && x.key, 20);
     if (!/^[A-Za-z0-9_]+$/.test(key) || keys[key]) key = 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
     keys[key] = true;
-    slots.push({ key, label, start, days });
+    slots.push({ key, label, start, end, days });
   });
   if (!slots.length) {
     bad('상담 시간대를 하나 이상 만들어 주세요.');
@@ -389,7 +429,21 @@ function normalizeSettings_(cls, input, strict) {
   });
   closedDates.sort((a, b) => a.date.localeCompare(b.date));
 
-  return { title, notice, startDate, endDate, slots, closedDates };
+  // 담임이 막아 둔 칸: 지금 있는 시간대이고 지나지 않은 날짜만 남긴다
+  const slotKeys = {};
+  slots.forEach(x => { slotKeys[x.key] = true; });
+  const blockedSeen = {};
+  const blocked = [];
+  (Array.isArray(input.blocked) ? input.blocked : []).forEach(b => {
+    const date = str(b && b.date, 10);
+    const slot = str(b && b.slot, 20);
+    if (!isDate(date) || date < today || !slotKeys[slot] || blockedSeen[date + '|' + slot]) return;
+    blockedSeen[date + '|' + slot] = true;
+    blocked.push({ date, slot });
+  });
+  blocked.sort((a, b) => (a.date + a.slot).localeCompare(b.date + b.slot));
+
+  return { title, notice, startDate, endDate, slots, closedDates, blocked };
 }
 
 /** 예전 형식(daysAhead: 오늘부터 며칠, lastDate: 마지막 날)으로 저장된 설정의 끝 날짜 */
@@ -401,11 +455,23 @@ function legacyEndDate_(input) {
   return /^\d{4}-\d{2}-\d{2}$/.test(last) && last < end ? last : end;
 }
 
-/** { key: { label, start } } */
+/** { key: { label, start, end } } */
 function slotMap_(st) {
   const map = {};
-  st.slots.forEach(s => { map[s.key] = { label: s.label, start: s.start }; });
+  st.slots.forEach(s => { map[s.key] = { label: s.label, start: s.start, end: s.end }; });
   return map;
+}
+
+/** { 'date|slot': true } 담임이 막아 둔 칸 */
+function blockedSet_(st) {
+  const set = {};
+  st.blocked.forEach(b => { set[b.date + '|' + b.slot] = true; });
+  return set;
+}
+
+/** '08:20~08:40' 또는 끝나는 시각이 없으면 '08:20~' */
+function timeText_(s) {
+  return s.start + '~' + (s.end || '');
 }
 
 /** 해당 요일에 열리는 시간대 key 목록 (시작 시각 순) */
@@ -466,6 +532,7 @@ function assertSlotAvailable_(cls, date, slot, rows, exceptId) {
     throw new UserError(WEEKDAYS[day.weekday] + '요일에는 해당 시간대 상담이 없습니다.');
   }
   if (holidays_(cls)[date]) throw new UserError('휴무일에는 예약할 수 없습니다.');
+  if (blockedSet_(st)[date + '|' + slot]) throw new UserError('예약을 받지 않는 시간입니다. 다른 시간을 선택해 주세요.');
   const { today, nowHm } = now_();
   if (date === today && nowHm >= slotMap[slot].start) {
     throw new UserError('이미 지난 시간대입니다.');
@@ -669,7 +736,7 @@ function pad2_(n) { return String(n).padStart(2, '0'); }
 
 function slotText_(cls, key) {
   const s = slotMap_(settings_(cls))[key];
-  return s.label + ' (' + s.start + '~)';
+  return s.label + ' (' + timeText_(s) + ')';
 }
 
 function sortKey_(r) {
