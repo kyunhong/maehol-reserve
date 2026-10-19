@@ -67,7 +67,6 @@
     $('refresh').hidden = view === 'settings';
     $('summary').hidden = view === 'settings';
     $('list').hidden = view === 'settings';
-    $('bulkPanel').hidden = view !== 'calendar';
     $('settingsPanel').hidden = view !== 'settings';
     $('pwPanel').hidden = view !== 'settings';
     if (view === 'calendar') renderCalendar();
@@ -77,7 +76,6 @@
 
   // ===================== 달력 보기 =====================
   function renderCalendar() {
-    renderBulkSlots();
     const { days, today } = state.avail;
     const active = state.rows.filter((r) => r.status === '예약' && r.date >= today);
     const byKey = new Map(active.map((r) => [`${r.date}|${r.slot}`, r]));
@@ -116,11 +114,11 @@
         for (const s of info.slots) {
           const meta = state.avail.slots[s.key];
           const r = byKey.get(`${date}|${s.key}`);
-          const cls = r ? 'taken' : s.status === 'closed' ? 'closed' : s.status === 'blocked' ? 'blocked' : 'free';
+          const cls = r ? 'taken' : s.status === 'closed' ? 'closed' : s.byRule ? 'rule' : s.status === 'blocked' ? 'blocked' : 'free';
           const when = `${dateLabel(date)} ${slotLabel(s.key)}`;
           // 예약 칸 → 취소, 빈 칸 → 막기, 막은 칸 → 다시 열기, 지난·휴무 칸 → 누를 수 없음
           const action = { taken: () => askCancel(r), free: () => askBlock(date, s.key, true), blocked: () => askBlock(date, s.key, false) }[cls];
-          const hint = { taken: '눌러서 예약 취소', free: '눌러서 이 시간 막기', blocked: '눌러서 다시 열기' }[cls];
+          const hint = { taken: '눌러서 예약 취소', free: '눌러서 이 시간 막기', blocked: '눌러서 다시 열기', rule: '설정의 예약 막기로 막힘' }[cls];
           cell.append(el(action ? 'button' : 'div', {
             class: `aslot ${cls}`,
             type: action ? 'button' : null,
@@ -128,7 +126,7 @@
             onclick: action || null,
           },
             el('span', { class: 't' }, `${timeText(meta)} ${meta.label}`),
-            el('span', { class: 'who' }, r ? `${r.studentId} ${r.name}` : { closed: '마감', blocked: '막음', free: '비어 있음' }[cls])));
+            el('span', { class: 'who' }, r ? `${r.studentId} ${r.name}` : { closed: '마감', blocked: '막음', rule: '막음 (설정)', free: '비어 있음' }[cls])));
         }
         week.append(cell);
       }
@@ -215,49 +213,6 @@
     });
   }
 
-  // ===================== 여러 칸 한꺼번에 막기·열기 =====================
-  // 요일 체크는 한 번만 만들고, 시간대 체크는 설정이 바뀔 수 있으니 달력을 그릴 때마다 (고른 것은 유지)
-  DAY_NAMES.forEach((name, i) => $('bulkDays').append(el('label', {},
-    el('input', { type: 'checkbox', class: 'bulk-day', value: i + 1 }), ` ${name}`)));
-
-  function renderBulkSlots() {
-    const picked = new Set([...document.querySelectorAll('.bulk-slot:checked')].map((c) => c.value));
-    $('bulkSlots').innerHTML = '';
-    for (const [key, s] of Object.entries(state.avail.slots)) {
-      $('bulkSlots').append(el('label', {},
-        el('input', { type: 'checkbox', class: 'bulk-slot', value: key, checked: picked.has(key) }), ` ${s.label} ${timeText(s)}`));
-    }
-  }
-
-  function askBulk(block) {
-    const slots = [...document.querySelectorAll('.bulk-slot:checked')].map((c) => c.value);
-    const days = [...document.querySelectorAll('.bulk-day:checked')].map((c) => Number(c.value));
-    const from = $('bulkFrom').value;
-    const to = $('bulkTo').value;
-    const msg = (text, kind = 'err') => { $('bulkMsg').className = `msg ${kind}`; $('bulkMsg').textContent = text; };
-    if (!slots.length) { msg('시간대를 하나 이상 골라 주세요.'); return; }
-    if (!days.length) { msg('요일을 하나 이상 골라 주세요.'); return; }
-    if (from && to && to < from) { msg('기간의 끝 날짜가 시작 날짜보다 빠릅니다.'); return; }
-    msg('', '');
-    const range = from || to ? `${from ? shortDate(from) : '처음'} ~ ${to ? shortDate(to) : '끝'}` : '예약 기간 전체';
-    askAction({
-      title: block ? '여러 칸 한꺼번에 막기' : '여러 칸 한꺼번에 다시 열기',
-      text: `${slots.map(slotLabel).join(', ')} · ${days.map((d) => DAY_NAMES[d - 1]).join('·')}요일 · ${range}`,
-      hint: block
-        ? '예약이 이미 있는 칸과 휴무일은 건너뜁니다. 막은 칸은 학생 화면에 "마감"으로 보입니다.'
-        : '고른 칸 가운데 막혀 있던 칸을 다시 엽니다.',
-      ok: block ? '막기' : '다시 열기',
-      run: async () => {
-        const res = await api('adminBlockMany', { adminPassword: state.password, slots, days, from, to, blocked: block });
-        const skipped = res.skipped.map((b) => `${shortDate(b.date)} ${slotLabel(b.slot)} (${b.studentId} ${b.name})`);
-        msg(`${res.changed}칸을 ${block ? '막았습니다' : '다시 열었습니다'}.` +
-          (skipped.length ? ` 예약이 있어 건너뛴 칸: ${skipped.join(', ')}` : ''), 'ok');
-      },
-    });
-  }
-  $('bulkBlock').addEventListener('click', () => askBulk(true));
-  $('bulkOpen').addEventListener('click', () => askBulk(false));
-
   function askBlock(date, slot, block) {
     askAction({
       title: block ? '이 시간 막기' : '다시 열기',
@@ -295,6 +250,8 @@
     $('stEndDate').min = st.startDate;
     $('stSlots').innerHTML = '';
     st.slots.forEach(addSlotRow);
+    $('stBlocks').innerHTML = '';
+    (st.blockRules || []).forEach(addBlockRow);
     $('stClosed').innerHTML = '';
     st.closedDates.forEach(addClosedRow);
   }
@@ -308,6 +265,20 @@
         el('input', { type: 'checkbox', class: 'st-day', value: i + 1, checked: s.days.includes(i + 1), 'aria-label': `${name}요일` }))),
       el('td', {}, el('button', { type: 'button', class: 'btn small danger', onclick: () => tr.remove() }, '삭제')));
     $('stSlots').append(tr);
+    return tr;
+  }
+
+  function addBlockRow(b = { start: '', end: '', days: [], from: '', to: '' }) {
+    const tr = el('tr', {},
+      el('td', {}, el('input', { class: 'bk-start', type: 'time', value: b.start, 'aria-label': '막기 시작 시각' })),
+      el('td', {}, el('input', { class: 'bk-end', type: 'time', value: b.end, 'aria-label': '막기 끝 시각' })),
+      ...DAY_NAMES.map((name, i) => el('td', { class: 'center' },
+        el('input', { type: 'checkbox', class: 'bk-day', value: i + 1, checked: b.days.includes(i + 1), 'aria-label': `${name}요일` }))),
+      el('td', { class: 'nowrap' },
+        el('input', { class: 'bk-from', type: 'date', value: b.from || '', 'aria-label': '기간 시작 (선택)' }), ' ~ ',
+        el('input', { class: 'bk-to', type: 'date', value: b.to || '', 'aria-label': '기간 끝 (선택)' })),
+      el('td', {}, el('button', { type: 'button', class: 'btn small danger', onclick: () => tr.remove() }, '삭제')));
+    $('stBlocks').append(tr);
     return tr;
   }
 
@@ -332,6 +303,13 @@
         start: tr.querySelector('.st-start').value,
         end: tr.querySelector('.st-end').value,
         days: [...tr.querySelectorAll('.st-day')].filter((c) => c.checked).map((c) => Number(c.value)),
+      })),
+      blockRules: [...$('stBlocks').rows].map((tr) => ({
+        start: tr.querySelector('.bk-start').value,
+        end: tr.querySelector('.bk-end').value,
+        days: [...tr.querySelectorAll('.bk-day')].filter((c) => c.checked).map((c) => Number(c.value)),
+        from: tr.querySelector('.bk-from').value,
+        to: tr.querySelector('.bk-to').value,
       })),
       closedDates: [...$('stClosed').rows]
         .map((tr) => ({ date: tr.querySelector('.st-date').value, reason: tr.querySelector('.st-reason').value.trim() }))
@@ -391,6 +369,7 @@
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
   $('addSlot').addEventListener('click', () => addSlotRow().querySelector('.st-label').focus());
+  $('addBlock').addEventListener('click', () => addBlockRow().querySelector('.bk-start').focus());
   $('addClosed').addEventListener('click', () => addClosedRow().querySelector('.st-date').focus());
   $('stStartDate').addEventListener('change', () => { $('stEndDate').min = $('stStartDate').value; });
   $('stReset').addEventListener('click', () => { state.settings = null; loadSettings(); });

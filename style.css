@@ -213,14 +213,8 @@ button.aslot.taken:hover .who { color: var(--danger); }
 .aslot.blocked .who { color: var(--muted); }
 button.aslot.free:hover, button.aslot.blocked:hover { border-left-color: var(--primary); background: var(--primary-weak); }
 
-/* 여러 칸 한꺼번에 막기·열기 */
-.bulk { border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; margin-bottom: 12px; }
-.bulk summary { cursor: pointer; padding: 10px 0; font-weight: 600; font-size: .95rem; }
-.bulk-body { padding-bottom: 12px; }
-.bulk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
-.bulk-label { width: 52px; font-size: .9rem; font-weight: 600; color: var(--muted); }
-.bulk-row input[type=date] { width: auto; padding: 6px 8px; }
-.bulk-row .hint { margin: 0; }
-.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
-.checks label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-weight: 500; font-size: .9rem; cursor: pointer; }
-.checks input { width: 16px; height: 16px; }
+/* 설정의 예약 막기로 막힌 칸 (달력에서는 누를 수 없음) */
+.aslot.rule { background: repeating-linear-gradient(135deg, var(--booked-weak) 0 6px, #fff 6px 12px); border-left-color: var(--booked); opacity: .8; }
+.aslot.rule .who { color: var(--muted); }
+.st-table .nowrap { white-space: nowrap; }
+.st-table input[type=date] { width: auto; }

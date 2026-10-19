@@ -159,36 +159,54 @@ test('담임이 시간대 한 칸을 막고 다시 열 수 있다 (자기 반만
   s.ok('book', { ...student(6, 1), date: '2026-10-22', slot: 'LUNCH' });
 });
 
-test('담임이 시간대 × 요일로 여러 칸을 한꺼번에 막고 연다', () => {
+test('설정의 예약 막기: 요일·시각 범위(·기간)에 시작하는 시간대를 막는다', () => {
   const s = setup();
   const t6 = { cls: 6, adminPassword: 'teacher6' };
   s.ok('book', { ...student(6, 1), date: '2026-10-21', slot: 'LUNCH' });
-  // 기본 예약 기간 10/19~11/16. 월요일 5번 + 수요일 4번 = 9칸, 그중 10/21은 예약이 있어 건너뜀
-  const res = s.ok('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [1, 3] });
-  assert.equal(res.changed, 8);
-  assert.deepEqual(res.skipped.map((b) => [b.date, b.studentId]), [['2026-10-21', '20601']]);
-  assert.equal(slotStatus(s, 6, '2026-10-26', 'LUNCH'), 'blocked');
-  assert.equal(slotStatus(s, 6, '2026-10-28', 'LUNCH'), 'blocked');
-  assert.equal(slotStatus(s, 6, '2026-10-27', 'LUNCH'), 'open'); // 화요일은 그대로
-  assert.equal(slotStatus(s, 6, '2026-10-26', 'MORNING'), 'open'); // 다른 시간대도 그대로
-  assert.equal(slotStatus(s, 7, '2026-10-26', 'LUNCH'), 'open'); // 다른 반도 그대로
+  const st = s.ok('adminGetSettings', t6);
+  assert.deepEqual(st.blockRules, []);
 
-  // 기간을 좁혀서 수요일만 다시 열기 (10/28 하루)
-  const open = s.ok('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [3], from: '2026-10-27', to: '2026-10-29', blocked: false });
-  assert.equal(open.changed, 1);
-  assert.equal(slotStatus(s, 6, '2026-10-28', 'LUNCH'), 'open');
-  assert.equal(slotStatus(s, 6, '2026-11-04', 'LUNCH'), 'blocked');
+  // 매주 수요일 13:00~14:00 + 11/2~11/13 월요일 08:00~09:00
+  const rules = [
+    { start: '13:00', end: '14:00', days: [3], from: '', to: '' },
+    { start: '08:00', end: '09:00', days: [1], from: '2026-11-02', to: '2026-11-13' },
+  ];
+  const first = s.ok('adminSaveSettings', { ...t6, settings: { ...st, blockRules: rules } });
+  assert.equal(first.saved, false); // 10/21(수) 점심 예약이 걸림
+  assert.deepEqual(first.conflicts.map((c) => [c.date, c.studentId]), [['2026-10-21', '20601']]);
+  s.ok('adminSaveSettings', { ...t6, settings: { ...st, blockRules: rules }, confirmCancel: true });
 
-  // 화요일에 없는 시간대(AFTER_EARLY: 월·금)는 고르더라도 그 요일엔 해당 없음
-  assert.equal(s.ok('adminBlockMany', { ...t6, slots: ['AFTER_EARLY'], days: [2] }).changed, 0);
-  // 한 칸씩 막기도 그대로 동작
-  s.ok('adminBlock', { ...t6, date: '2026-10-27', slot: 'MORNING' });
-  assert.equal(slotStatus(s, 6, '2026-10-27', 'MORNING'), 'blocked');
+  const status = (date, key) => slotStatus(s, 6, date, key);
+  assert.equal(status('2026-10-21', 'LUNCH'), 'blocked');
+  assert.equal(status('2026-10-28', 'LUNCH'), 'blocked');
+  assert.equal(status('2026-10-27', 'LUNCH'), 'open'); // 화요일
+  assert.equal(status('2026-10-28', 'MORNING'), 'open'); // 범위 밖 시각
+  assert.equal(status('2026-10-26', 'MORNING'), 'open'); // 기간 전
+  assert.equal(status('2026-11-02', 'MORNING'), 'blocked'); // 기간 안 월요일
+  assert.equal(status('2026-11-16', 'MORNING'), 'open'); // 기간 뒤
+  assert.equal(slotStatus(s, 7, '2026-10-28', 'LUNCH'), 'open'); // 다른 반
+  const cell = s.ok('availability', { cls: 6 }).days.find((d) => d.date === '2026-10-28').slots.find((x) => x.key === 'LUNCH');
+  assert.equal(cell.byRule, true);
 
-  assert.match(s.err('adminBlockMany', { ...t6, slots: [], days: [1] }), /시간대를 하나 이상/);
-  assert.match(s.err('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [] }), /요일을 하나 이상/);
-  assert.match(s.err('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [1], from: '2026-11-01', to: '2026-10-30' }), /빠릅니다/);
-  assert.match(s.err('adminBlockMany', { cls: 7, adminPassword: 'teacher6', slots: ['LUNCH'], days: [1] }), /틀렸습니다/);
+  assert.match(s.err('book', { ...student(6, 2), date: '2026-10-28', slot: 'LUNCH' }), /예약을 받지 않는 시간/);
+  s.ok('book', { ...student(6, 2), date: '2026-10-27', slot: 'LUNCH' });
+
+  // 끝 시각과 같은 시각에 시작하는 시간대는 막지 않는다 (13:30 은 13:00~13:30 에 안 걸림)
+  s.ok('adminSaveSettings', { ...t6, settings: { ...st, blockRules: [{ start: '13:00', end: '13:30', days: [2], from: '', to: '' }] } });
+  assert.equal(status('2026-10-27', 'LUNCH'), 'booked');
+  assert.equal(status('2026-11-03', 'LUNCH'), 'open');
+
+  // 달력에서 한 칸 막기는 그대로, 설정 저장해도 유지
+  s.ok('adminBlock', { ...t6, date: '2026-10-29', slot: 'MORNING' });
+  s.ok('adminSaveSettings', { ...t6, settings: { ...st, blockRules: [] } });
+  assert.equal(status('2026-10-29', 'MORNING'), 'blocked');
+  assert.equal(status('2026-10-28', 'LUNCH'), 'open');
+
+  const bad = (rule) => s.err('adminSaveSettings', { ...t6, settings: { ...st, blockRules: [{ start: '13:00', end: '14:00', days: [3], from: '', to: '', ...rule }] } });
+  assert.match(bad({ end: '12:00' }), /끝 시각은 시작 시각보다 늦어야/);
+  assert.match(bad({ start: '' }), /시작·끝 시각을 입력/);
+  assert.match(bad({ days: [] }), /요일을 하나 이상/);
+  assert.match(bad({ from: '2026-11-10', to: '2026-11-01' }), /빠릅니다/);
 });
 
 test('시간대 끝나는 시각은 선택, 있으면 시작보다 늦어야 한다', () => {

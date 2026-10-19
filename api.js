@@ -72,6 +72,12 @@
     };
     const slotMap = (st) => Object.fromEntries(st.slots.map((s) => [s.key, { label: s.label, start: s.start, end: s.end || '' }]));
     const isBlocked = (st, date, slot) => (st.blocked || []).some((b) => b.date === date && b.slot === slot);
+    // 설정의 '예약 막기': 그 요일·기간에, 시간대 시작 시각이 막기 시작 이상 끝 미만
+    const ruleBlocked = (st, date, weekday, slot) => {
+      const s = st.slots.find((x) => x.key === slot);
+      return Boolean(s) && (st.blockRules || []).some((b) => b.days.includes(weekday)
+        && (!b.from || date >= b.from) && (!b.to || date <= b.to) && s.start >= b.start && s.start < b.end);
+    };
     const daySlots = (st, wd) => st.slots.filter((s) => s.days.includes(wd)).map((s) => s.key);
     const holidays = (st) => Object.fromEntries(st.closedDates.map((c) => [c.date, c.reason]));
     const now = () => { const d = new Date(); return { today: fmt(d), nowHm: `${pad(d.getHours())}:${pad(d.getMinutes())}` }; };
@@ -93,7 +99,7 @@
       const day = dates(st).find((d) => d.date === date) || fail('예약할 수 없는 날짜입니다.');
       if (!daySlots(st, day.weekday).includes(slot)) fail('해당 요일에는 그 시간대 상담이 없습니다.');
       if (holidays(st)[date]) fail('휴무일에는 예약할 수 없습니다.');
-      if (isBlocked(st, date, slot)) fail('예약을 받지 않는 시간입니다. 다른 시간을 선택해 주세요.');
+      if (isBlocked(st, date, slot) || ruleBlocked(st, date, day.weekday, slot)) fail('예약을 받지 않는 시간입니다. 다른 시간을 선택해 주세요.');
       const { today, nowHm } = now();
       if (date === today && nowHm >= map[slot].start) fail('이미 지난 시간대입니다.');
       if (classRows(rows, cls).some((r) => r.status === ACTIVE && r.date === date && r.slot === slot && r.id !== exceptId)) {
@@ -122,12 +128,13 @@
         const rows = classRows(read(BOOKINGS_KEY, []), cls); const { today, nowHm } = now();
         const days = dates(st).map((d) => ({
           date: d.date, weekday: d.weekday, holiday: hol[d.date] || null,
-          slots: daySlots(st, d.weekday).map((key) => ({
-            key,
-            status: hol[d.date] || (d.date === today && nowHm >= map[key].start) ? 'closed'
-              : rows.some((r) => r.status === ACTIVE && r.date === d.date && r.slot === key) ? 'booked'
-                : isBlocked(st, d.date, key) ? 'blocked' : 'open',
-          })),
+          slots: daySlots(st, d.weekday).map((key) => {
+            if (hol[d.date] || (d.date === today && nowHm >= map[key].start)) return { key, status: 'closed' };
+            if (rows.some((r) => r.status === ACTIVE && r.date === d.date && r.slot === key)) return { key, status: 'booked' };
+            if (isBlocked(st, d.date, key)) return { key, status: 'blocked' };
+            if (ruleBlocked(st, d.date, d.weekday, key)) return { key, status: 'blocked', byRule: true };
+            return { key, status: 'open' };
+          }),
         })).filter((d) => d.slots.length);
         return { cls, today, title: st.title, notice: st.notice, slots: map, days };
       },
@@ -161,32 +168,6 @@
         return sortRows(classRows(read(BOOKINGS_KEY, []), cls)
           .filter((r) => p.all || (r.status === ACTIVE && r.date >= today))).map(strip);
       },
-      adminBlockMany(p) {
-        const cls = cleanClass(p.cls);
-        const st = settings(cls);
-        const block = p.blocked !== false;
-        if (!p.slots.length) fail('시간대를 하나 이상 골라 주세요.');
-        if (!p.days.length) fail('요일을 하나 이상 골라 주세요.');
-        if (p.from && p.to && p.to < p.from) fail('기간의 끝 날짜가 시작 날짜보다 빠릅니다.');
-        const hol = holidays(st);
-        const booked = new Map(classRows(read(BOOKINGS_KEY, []), cls).filter((r) => r.status === ACTIVE).map((r) => [`${r.date}|${r.slot}`, r]));
-        const target = new Set();
-        const skipped = [];
-        for (const d of dates(st)) {
-          if ((p.from && d.date < p.from) || (p.to && d.date > p.to) || !p.days.includes(d.weekday) || hol[d.date]) continue;
-          for (const k of daySlots(st, d.weekday).filter((x) => p.slots.includes(x))) {
-            const key = `${d.date}|${k}`;
-            if (block && booked.has(key)) skipped.push(strip(booked.get(key)));
-            else target.add(key);
-          }
-        }
-        const before = new Set((st.blocked || []).map((b) => `${b.date}|${b.slot}`));
-        const changed = [...target].filter((key) => before.has(key) !== block).length;
-        st.blocked = (st.blocked || []).filter((b) => !target.has(`${b.date}|${b.slot}`));
-        if (block) target.forEach((key) => { const [date, slot] = key.split('|'); st.blocked.push({ date, slot }); });
-        write(SETTINGS_KEY(cls), st);
-        return { blocked: block, changed, skipped };
-      },
       adminBlock(p) {
         const cls = cleanClass(p.cls);
         const st = settings(cls);
@@ -214,7 +195,15 @@
       adminSaveSettings(p) {
         const cls = cleanClass(p.cls);
         const next = JSON.parse(JSON.stringify(p.settings));
-        if (!Array.isArray(next.blocked)) next.blocked = settings(cls).blocked || []; // 설정 탭은 막은 칸을 보내지 않음
+        next.blocked = settings(cls).blocked || []; // 달력에서 한 칸씩 막은 칸은 그대로
+        next.blockRules = (next.blockRules || []).map((b, i) => {
+          const name = `예약 막기 ${i + 1}번째 줄`;
+          if (!b.start || !b.end) fail(`${name}의 시작·끝 시각을 입력해 주세요.`);
+          if (b.end <= b.start) fail(`${name}의 끝 시각은 시작 시각보다 늦어야 합니다.`);
+          if (!b.days.length) fail(`${name}의 요일을 하나 이상 체크해 주세요.`);
+          if (b.from && b.to && b.to < b.from) fail(`${name}의 기간 끝 날짜가 시작 날짜보다 빠릅니다.`);
+          return { start: b.start, end: b.end, days: b.days, from: b.from || '', to: b.to || '' };
+        });
         if (!next.slots.length) fail('상담 시간대를 하나 이상 만들어 주세요.');
         const today = addDays(0);
         if (!next.startDate || next.startDate < today) next.startDate = today;
@@ -239,7 +228,8 @@
         const conflicts = classRows(rows, cls).filter((r) => {
           if (r.status !== ACTIVE || r.date < today) return false;
           const s = next.slots.find((x) => x.key === r.slot);
-          return !s || !s.days.includes(weekdayOf(r.date)) || r.date < next.startDate || r.date > next.endDate || closed.has(r.date);
+          return !s || !s.days.includes(weekdayOf(r.date)) || r.date < next.startDate || r.date > next.endDate || closed.has(r.date)
+            || ruleBlocked(next, r.date, weekdayOf(r.date), r.slot);
         });
         if (conflicts.length && !p.confirmCancel) {
           const old = slotMap(settings(cls));

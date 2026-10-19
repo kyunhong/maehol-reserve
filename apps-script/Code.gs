@@ -89,7 +89,6 @@ const ACTIONS = {
   adminChangePassword: apiAdminChangePassword_,
   adminCancel: apiAdminCancel_,
   adminBlock: apiAdminBlock_,
-  adminBlockMany: apiAdminBlockMany_,
   // 학년 관리 (전 반 보기 + 담임 비밀번호 정하기)
   masterOverview: apiMasterOverview_,
   masterSetPassword: apiMasterSetPassword_,
@@ -140,7 +139,8 @@ function apiAvailability_(p) {
         if (holiday) status = 'closed';
         else if (d.date === today && nowHm >= slotMap[key].start) status = 'closed';
         else if (booked.has(d.date + '|' + key)) status = 'booked';
-        else if (blocked[d.date + '|' + key]) status = 'blocked'; // 담임이 막아 둔 칸 (학생에게는 '마감')
+        else if (blocked[d.date + '|' + key]) status = 'blocked'; // 담임이 달력에서 막은 칸 (학생에게는 '마감')
+        else if (ruleBlocked_(st, d.date, d.weekday, key)) return { key, status: 'blocked', byRule: true }; // 설정의 '예약 막기'
         return { key, status };
       }),
     };
@@ -236,7 +236,7 @@ function apiAdminGetSettings_(p) {
 function apiAdminSaveSettings_(p) {
   const cls = verifyAdmin_(p.cls, p.adminPassword);
   const input = Object.assign({}, p.settings || {});
-  if (!Array.isArray(input.blocked)) input.blocked = settings_(cls).blocked; // 설정 탭은 막은 칸을 보내지 않으니 그대로 둔다
+  input.blocked = settings_(cls).blocked; // 달력에서 한 칸씩 막은 칸은 설정 저장과 상관없이 그대로 둔다
   const next = normalizeSettings_(cls, input, true);
   return withLock_(() => {
     const { today } = now_();
@@ -246,7 +246,8 @@ function apiAdminSaveSettings_(p) {
       if (r.status !== ACTIVE || r.date < today) return false;
       const s = next.slots.find(x => x.key === r.slot);
       return !s || !s.days.includes(weekdayOf_(r.date)) ||
-        r.date < next.startDate || r.date > next.endDate || Boolean(closed[r.date]);
+        r.date < next.startDate || r.date > next.endDate || Boolean(closed[r.date]) ||
+        ruleBlocked_(next, r.date, weekdayOf_(r.date), r.slot);
     });
     if (conflicts.length && !p.confirmCancel) {
       const old = slotMap_(settings_(cls));
@@ -308,45 +309,6 @@ function apiAdminBlock_(p) {
     const next = normalizeSettings_(cls, Object.assign({}, st, { blocked }), false);
     saveSettings_(cls, next);
     return { date, slot, blocked: block };
-  });
-}
-
-/**
- * 담임: 여러 칸 한꺼번에 막기 / 다시 열기.
- * slots(시간대 key 목록) × days(요일 1=월…5=금) × 기간(from~to, 비우면 예약 기간 전체).
- * 막을 때 예약이 있는 칸·휴무일은 건너뛰고, 건너뛴 예약 목록을 돌려준다.
- */
-function apiAdminBlockMany_(p) {
-  const cls = verifyAdmin_(p.cls, p.adminPassword);
-  const slots = (Array.isArray(p.slots) ? p.slots : []).map(String);
-  const days = (Array.isArray(p.days) ? p.days : []).map(Number);
-  const from = String(p.from || '');
-  const to = String(p.to || '');
-  const block = p.blocked !== false;
-  if (!slots.length) throw new UserError('시간대를 하나 이상 골라 주세요.');
-  if (!days.length) throw new UserError('요일을 하나 이상 골라 주세요.');
-  if (from && to && to < from) throw new UserError('기간의 끝 날짜가 시작 날짜보다 빠릅니다.');
-  return withLock_(() => {
-    const st = settings_(cls);
-    const holidays = holidays_(cls);
-    const booked = {};
-    classRows_(cls).filter(r => r.status === ACTIVE).forEach(r => { booked[r.date + '|' + r.slot] = r; });
-    const current = blockedSet_(st);
-    const target = {};
-    const skipped = [];
-    calendarDates_(st).forEach(d => {
-      if ((from && d.date < from) || (to && d.date > to) || !days.includes(d.weekday) || holidays[d.date]) return;
-      daySlots_(st, d.weekday).filter(k => slots.includes(k)).forEach(k => {
-        const key = d.date + '|' + k;
-        if (block && booked[key]) skipped.push(publicView_(booked[key]));
-        else target[key] = true;
-      });
-    });
-    const changed = Object.keys(target).filter(key => Boolean(current[key]) !== block).length;
-    const blocked = st.blocked.filter(b => !target[b.date + '|' + b.slot]);
-    if (block) Object.keys(target).forEach(key => { const [date, slot] = key.split('|'); blocked.push({ date, slot }); });
-    saveSettings_(cls, normalizeSettings_(cls, Object.assign({}, st, { blocked }), false));
-    return { blocked: block, changed, skipped };
   });
 }
 
@@ -483,7 +445,34 @@ function normalizeSettings_(cls, input, strict) {
   });
   blocked.sort((a, b) => (a.date + a.slot).localeCompare(b.date + b.slot));
 
-  return { title, notice, startDate, endDate, slots, closedDates, blocked };
+  // 예약 막기 규칙: 요일마다 시작~끝 시각 사이에 시작하는 시간대를 막는다 (기간은 선택)
+  const blockRules = [];
+  (Array.isArray(input.blockRules) ? input.blockRules : []).forEach((x, i) => {
+    const name = '예약 막기 ' + (i + 1) + '번째 줄';
+    const rs = str(x && x.start, 5);
+    const re = str(x && x.end, 5);
+    const rdays = [...new Set((Array.isArray(x && x.days) ? x.days : []).map(Number))]
+      .filter(d => d >= 1 && d <= 5).sort();
+    const from = str(x && x.from, 10);
+    const to = str(x && x.to, 10);
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(rs) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(re)) return bad(name + '의 시작·끝 시각을 입력해 주세요.');
+    if (re <= rs) return bad(name + '의 끝 시각은 시작 시각보다 늦어야 합니다.');
+    if (!rdays.length) return bad(name + '의 요일을 하나 이상 체크해 주세요.');
+    if ((from && !isDate(from)) || (to && !isDate(to))) return bad(name + '의 기간 날짜를 다시 확인해 주세요.');
+    if (from && to && to < from) return bad(name + '의 기간 끝 날짜가 시작 날짜보다 빠릅니다.');
+    blockRules.push({ start: rs, end: re, days: rdays, from, to });
+  });
+
+  return { title, notice, startDate, endDate, slots, closedDates, blocked, blockRules };
+}
+
+/** 설정의 '예약 막기'에 걸리는 칸인지: 그 요일·기간에, 시간대 시작 시각이 막기 시작 이상 끝 미만 */
+function ruleBlocked_(st, date, weekday, slotKey) {
+  const slot = st.slots.find(x => x.key === slotKey);
+  if (!slot) return false;
+  return (st.blockRules || []).some(b => b.days.includes(weekday) &&
+    (!b.from || date >= b.from) && (!b.to || date <= b.to) &&
+    slot.start >= b.start && slot.start < b.end);
 }
 
 /** 예전 형식(daysAhead: 오늘부터 며칠, lastDate: 마지막 날)으로 저장된 설정의 끝 날짜 */
@@ -572,7 +561,9 @@ function assertSlotAvailable_(cls, date, slot, rows, exceptId) {
     throw new UserError(WEEKDAYS[day.weekday] + '요일에는 해당 시간대 상담이 없습니다.');
   }
   if (holidays_(cls)[date]) throw new UserError('휴무일에는 예약할 수 없습니다.');
-  if (blockedSet_(st)[date + '|' + slot]) throw new UserError('예약을 받지 않는 시간입니다. 다른 시간을 선택해 주세요.');
+  if (blockedSet_(st)[date + '|' + slot] || ruleBlocked_(st, date, day.weekday, slot)) {
+    throw new UserError('예약을 받지 않는 시간입니다. 다른 시간을 선택해 주세요.');
+  }
   const { today, nowHm } = now_();
   if (date === today && nowHm >= slotMap[slot].start) {
     throw new UserError('이미 지난 시간대입니다.');
