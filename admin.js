@@ -80,7 +80,7 @@
     const active = state.rows.filter((r) => r.status === '예약' && r.date >= today);
     const byKey = new Map(active.map((r) => [`${r.date}|${r.slot}`, r]));
     const byDate = Object.fromEntries(days.map((d) => [d.date, d]));
-    const total = days.reduce((n, d) => n + d.slots.length, 0);
+    const total = days.reduce((n, d) => n + d.slots.filter((s) => !s.virtual).length, 0); // '예약 막기'만 있는 칸은 빼고
     const range = days.length ? `${shortDate(days[0].date)} ~ ${shortDate(days[days.length - 1].date)}` : '없음';
     $('summary').textContent = `예약 기간 ${range} · 예약 ${active.length}건 / 전체 ${total}칸 · 빈 칸을 누르면 그 시간을 막고, 막은 칸을 누르면 다시 엽니다.`;
 

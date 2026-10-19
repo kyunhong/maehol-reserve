@@ -127,23 +127,30 @@ function apiAvailability_(p) {
   const st = settings_(cls);
   const slotMap = slotMap_(st);
   const blocked = blockedSet_(st);
+  // 설정의 '예약 막기' 줄마다 칸 정보 (상담 시간대가 없는 시간도 학생 달력에 '마감'으로 보이도록)
+  st.blockRules.forEach((b, i) => { slotMap['RULE' + i] = { label: '예약 막기', start: b.start, end: b.end, rule: true }; });
   const days = calendarDates_(st).map(d => {
     const keys = daySlots_(st, d.weekday);
     const holiday = holidays[d.date] || null;
-    return {
-      date: d.date,
-      weekday: d.weekday,
-      holiday,
-      slots: keys.map(key => {
-        let status = 'open';
-        if (holiday) status = 'closed';
-        else if (d.date === today && nowHm >= slotMap[key].start) status = 'closed';
-        else if (booked.has(d.date + '|' + key)) status = 'booked';
-        else if (blocked[d.date + '|' + key]) status = 'blocked'; // 담임이 달력에서 막은 칸 (학생에게는 '마감')
-        else if (ruleBlocked_(st, d.date, d.weekday, key)) return { key, status: 'blocked', byRule: true }; // 설정의 '예약 막기'
-        return { key, status };
-      }),
-    };
+    const slots = keys.map(key => {
+      let status = 'open';
+      if (holiday) status = 'closed';
+      else if (d.date === today && nowHm >= slotMap[key].start) status = 'closed';
+      else if (booked.has(d.date + '|' + key)) status = 'booked';
+      else if (blocked[d.date + '|' + key]) status = 'blocked'; // 담임이 달력에서 막은 칸 (학생에게는 '마감')
+      else if (ruleBlocked_(st, d.date, d.weekday, key)) return { key, status: 'blocked', byRule: true }; // 설정의 '예약 막기'
+      return { key, status };
+    });
+    // 그날 걸리는 상담 시간대가 하나도 없는 '예약 막기' 줄은 따로 '마감' 칸을 만든다 (예약 불가, 표시용)
+    if (!holiday) {
+      st.blockRules.forEach((b, i) => {
+        if (!ruleApplies_(b, d.date, d.weekday)) return;
+        const covers = keys.some(k => slotMap[k].start >= b.start && slotMap[k].start < b.end);
+        if (!covers) slots.push({ key: 'RULE' + i, status: 'blocked', byRule: true, virtual: true });
+      });
+      slots.sort((a, b) => slotMap[a.key].start.localeCompare(slotMap[b.key].start));
+    }
+    return { date: d.date, weekday: d.weekday, holiday, slots };
   }).filter(d => d.slots.length > 0);
 
   return { cls, today, title: st.title, notice: st.notice, slots: slotMap, days };
@@ -470,9 +477,13 @@ function normalizeSettings_(cls, input, strict) {
 function ruleBlocked_(st, date, weekday, slotKey) {
   const slot = st.slots.find(x => x.key === slotKey);
   if (!slot) return false;
-  return (st.blockRules || []).some(b => b.days.includes(weekday) &&
-    (!b.from || date >= b.from) && (!b.to || date <= b.to) &&
+  return (st.blockRules || []).some(b => ruleApplies_(b, date, weekday) &&
     slot.start >= b.start && slot.start < b.end);
+}
+
+/** '예약 막기' 한 줄이 그 날짜(요일·기간)에 적용되는지 */
+function ruleApplies_(b, date, weekday) {
+  return b.days.includes(weekday) && (!b.from || date >= b.from) && (!b.to || date <= b.to);
 }
 
 /** 예전 형식(daysAhead: 오늘부터 며칠, lastDate: 마지막 날)으로 저장된 설정의 끝 날짜 */

@@ -209,6 +209,30 @@ test('설정의 예약 막기: 요일·시각 범위(·기간)에 시작하는 �
   assert.match(bad({ from: '2026-11-10', to: '2026-11-01' }), /빠릅니다/);
 });
 
+test('상담 시간대가 없는 시간의 예약 막기도 학생 달력에 마감 칸으로 보인다', () => {
+  const s = setup();
+  const t6 = { cls: 6, adminPassword: 'teacher6' };
+  const st = s.ok('adminGetSettings', t6);
+  // 목요일 15:00~16:00: 걸리는 상담 시간대 없음 → 따로 '마감' 칸. 수요일 13:00~14:00: 점심시간이 막힘 → 따로 칸 없음
+  s.ok('adminSaveSettings', { ...t6, settings: { ...st, blockRules: [
+    { start: '15:00', end: '16:00', days: [4], from: '', to: '' },
+    { start: '13:00', end: '14:00', days: [3], from: '', to: '' },
+  ] } });
+  const a = s.ok('availability', { cls: 6 });
+  assert.deepEqual(a.slots.RULE0, { label: '예약 막기', start: '15:00', end: '16:00', rule: true });
+  const thu = a.days.find((d) => d.date === '2026-10-22').slots;
+  assert.deepEqual(thu.map((x) => [x.key, x.status]),
+    [['MORNING', 'open'], ['LUNCH', 'open'], ['RULE0', 'blocked'], ['AFTER', 'open']]); // 시각 순
+  assert.equal(thu.find((x) => x.key === 'RULE0').virtual, true);
+  const wed = a.days.find((d) => d.date === '2026-10-21').slots;
+  assert.ok(!wed.some((x) => x.virtual));
+  assert.equal(wed.find((x) => x.key === 'LUNCH').status, 'blocked');
+  assert.ok(!a.days.find((d) => d.date === '2026-10-23').slots.some((x) => x.virtual)); // 금요일엔 없음
+
+  assert.match(s.err('book', { ...student(6, 1), date: '2026-10-22', slot: 'RULE0' }), /시간대를 다시 선택/);
+  assert.ok(!s.ok('availability', { cls: 7 }).slots.RULE0); // 다른 반엔 없음
+});
+
 test('시간대 끝나는 시각은 선택, 있으면 시작보다 늦어야 한다', () => {
   const s = setup();
   const t6 = { cls: 6, adminPassword: 'teacher6' };

@@ -73,6 +73,7 @@
     const slotMap = (st) => Object.fromEntries(st.slots.map((s) => [s.key, { label: s.label, start: s.start, end: s.end || '' }]));
     const isBlocked = (st, date, slot) => (st.blocked || []).some((b) => b.date === date && b.slot === slot);
     // 설정의 '예약 막기': 그 요일·기간에, 시간대 시작 시각이 막기 시작 이상 끝 미만
+    const ruleApplies = (b, date, weekday) => b.days.includes(weekday) && (!b.from || date >= b.from) && (!b.to || date <= b.to);
     const ruleBlocked = (st, date, weekday, slot) => {
       const s = st.slots.find((x) => x.key === slot);
       return Boolean(s) && (st.blockRules || []).some((b) => b.days.includes(weekday)
@@ -126,16 +127,27 @@
         const cls = cleanClass(p.cls);
         const st = settings(cls); const map = slotMap(st); const hol = holidays(st);
         const rows = classRows(read(BOOKINGS_KEY, []), cls); const { today, nowHm } = now();
-        const days = dates(st).map((d) => ({
-          date: d.date, weekday: d.weekday, holiday: hol[d.date] || null,
-          slots: daySlots(st, d.weekday).map((key) => {
+        const rules = st.blockRules || [];
+        rules.forEach((b, i) => { map[`RULE${i}`] = { label: '예약 막기', start: b.start, end: b.end, rule: true }; });
+        const days = dates(st).map((d) => {
+          const keys = daySlots(st, d.weekday);
+          const slots = keys.map((key) => {
             if (hol[d.date] || (d.date === today && nowHm >= map[key].start)) return { key, status: 'closed' };
             if (rows.some((r) => r.status === ACTIVE && r.date === d.date && r.slot === key)) return { key, status: 'booked' };
             if (isBlocked(st, d.date, key)) return { key, status: 'blocked' };
             if (ruleBlocked(st, d.date, d.weekday, key)) return { key, status: 'blocked', byRule: true };
             return { key, status: 'open' };
-          }),
-        })).filter((d) => d.slots.length);
+          });
+          // 걸리는 상담 시간대가 없는 '예약 막기' 줄은 따로 '마감' 칸
+          if (!hol[d.date]) {
+            rules.forEach((b, i) => {
+              if (!ruleApplies(b, d.date, d.weekday)) return;
+              if (!keys.some((k) => map[k].start >= b.start && map[k].start < b.end)) slots.push({ key: `RULE${i}`, status: 'blocked', byRule: true, virtual: true });
+            });
+            slots.sort((a, b) => map[a.key].start.localeCompare(map[b.key].start));
+          }
+          return { date: d.date, weekday: d.weekday, holiday: hol[d.date] || null, slots };
+        }).filter((d) => d.slots.length);
         return { cls, today, title: st.title, notice: st.notice, slots: map, days };
       },
       book(p) {
