@@ -161,6 +161,32 @@
         return sortRows(classRows(read(BOOKINGS_KEY, []), cls)
           .filter((r) => p.all || (r.status === ACTIVE && r.date >= today))).map(strip);
       },
+      adminBlockMany(p) {
+        const cls = cleanClass(p.cls);
+        const st = settings(cls);
+        const block = p.blocked !== false;
+        if (!p.slots.length) fail('시간대를 하나 이상 골라 주세요.');
+        if (!p.days.length) fail('요일을 하나 이상 골라 주세요.');
+        if (p.from && p.to && p.to < p.from) fail('기간의 끝 날짜가 시작 날짜보다 빠릅니다.');
+        const hol = holidays(st);
+        const booked = new Map(classRows(read(BOOKINGS_KEY, []), cls).filter((r) => r.status === ACTIVE).map((r) => [`${r.date}|${r.slot}`, r]));
+        const target = new Set();
+        const skipped = [];
+        for (const d of dates(st)) {
+          if ((p.from && d.date < p.from) || (p.to && d.date > p.to) || !p.days.includes(d.weekday) || hol[d.date]) continue;
+          for (const k of daySlots(st, d.weekday).filter((x) => p.slots.includes(x))) {
+            const key = `${d.date}|${k}`;
+            if (block && booked.has(key)) skipped.push(strip(booked.get(key)));
+            else target.add(key);
+          }
+        }
+        const before = new Set((st.blocked || []).map((b) => `${b.date}|${b.slot}`));
+        const changed = [...target].filter((key) => before.has(key) !== block).length;
+        st.blocked = (st.blocked || []).filter((b) => !target.has(`${b.date}|${b.slot}`));
+        if (block) target.forEach((key) => { const [date, slot] = key.split('|'); st.blocked.push({ date, slot }); });
+        write(SETTINGS_KEY(cls), st);
+        return { blocked: block, changed, skipped };
+      },
       adminBlock(p) {
         const cls = cleanClass(p.cls);
         const st = settings(cls);

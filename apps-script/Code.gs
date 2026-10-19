@@ -89,6 +89,7 @@ const ACTIONS = {
   adminChangePassword: apiAdminChangePassword_,
   adminCancel: apiAdminCancel_,
   adminBlock: apiAdminBlock_,
+  adminBlockMany: apiAdminBlockMany_,
   // 학년 관리 (전 반 보기 + 담임 비밀번호 정하기)
   masterOverview: apiMasterOverview_,
   masterSetPassword: apiMasterSetPassword_,
@@ -307,6 +308,45 @@ function apiAdminBlock_(p) {
     const next = normalizeSettings_(cls, Object.assign({}, st, { blocked }), false);
     saveSettings_(cls, next);
     return { date, slot, blocked: block };
+  });
+}
+
+/**
+ * 담임: 여러 칸 한꺼번에 막기 / 다시 열기.
+ * slots(시간대 key 목록) × days(요일 1=월…5=금) × 기간(from~to, 비우면 예약 기간 전체).
+ * 막을 때 예약이 있는 칸·휴무일은 건너뛰고, 건너뛴 예약 목록을 돌려준다.
+ */
+function apiAdminBlockMany_(p) {
+  const cls = verifyAdmin_(p.cls, p.adminPassword);
+  const slots = (Array.isArray(p.slots) ? p.slots : []).map(String);
+  const days = (Array.isArray(p.days) ? p.days : []).map(Number);
+  const from = String(p.from || '');
+  const to = String(p.to || '');
+  const block = p.blocked !== false;
+  if (!slots.length) throw new UserError('시간대를 하나 이상 골라 주세요.');
+  if (!days.length) throw new UserError('요일을 하나 이상 골라 주세요.');
+  if (from && to && to < from) throw new UserError('기간의 끝 날짜가 시작 날짜보다 빠릅니다.');
+  return withLock_(() => {
+    const st = settings_(cls);
+    const holidays = holidays_(cls);
+    const booked = {};
+    classRows_(cls).filter(r => r.status === ACTIVE).forEach(r => { booked[r.date + '|' + r.slot] = r; });
+    const current = blockedSet_(st);
+    const target = {};
+    const skipped = [];
+    calendarDates_(st).forEach(d => {
+      if ((from && d.date < from) || (to && d.date > to) || !days.includes(d.weekday) || holidays[d.date]) return;
+      daySlots_(st, d.weekday).filter(k => slots.includes(k)).forEach(k => {
+        const key = d.date + '|' + k;
+        if (block && booked[key]) skipped.push(publicView_(booked[key]));
+        else target[key] = true;
+      });
+    });
+    const changed = Object.keys(target).filter(key => Boolean(current[key]) !== block).length;
+    const blocked = st.blocked.filter(b => !target[b.date + '|' + b.slot]);
+    if (block) Object.keys(target).forEach(key => { const [date, slot] = key.split('|'); blocked.push({ date, slot }); });
+    saveSettings_(cls, normalizeSettings_(cls, Object.assign({}, st, { blocked }), false));
+    return { blocked: block, changed, skipped };
   });
 }
 

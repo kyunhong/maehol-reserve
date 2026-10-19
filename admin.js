@@ -67,6 +67,7 @@
     $('refresh').hidden = view === 'settings';
     $('summary').hidden = view === 'settings';
     $('list').hidden = view === 'settings';
+    $('bulkPanel').hidden = view !== 'calendar';
     $('settingsPanel').hidden = view !== 'settings';
     $('pwPanel').hidden = view !== 'settings';
     if (view === 'calendar') renderCalendar();
@@ -76,6 +77,7 @@
 
   // ===================== 달력 보기 =====================
   function renderCalendar() {
+    renderBulkSlots();
     const { days, today } = state.avail;
     const active = state.rows.filter((r) => r.status === '예약' && r.date >= today);
     const byKey = new Map(active.map((r) => [`${r.date}|${r.slot}`, r]));
@@ -212,6 +214,49 @@
       run: () => api('adminCancel', { adminPassword: state.password, id: r.id }),
     });
   }
+
+  // ===================== 여러 칸 한꺼번에 막기·열기 =====================
+  // 요일 체크는 한 번만 만들고, 시간대 체크는 설정이 바뀔 수 있으니 달력을 그릴 때마다 (고른 것은 유지)
+  DAY_NAMES.forEach((name, i) => $('bulkDays').append(el('label', {},
+    el('input', { type: 'checkbox', class: 'bulk-day', value: i + 1 }), ` ${name}`)));
+
+  function renderBulkSlots() {
+    const picked = new Set([...document.querySelectorAll('.bulk-slot:checked')].map((c) => c.value));
+    $('bulkSlots').innerHTML = '';
+    for (const [key, s] of Object.entries(state.avail.slots)) {
+      $('bulkSlots').append(el('label', {},
+        el('input', { type: 'checkbox', class: 'bulk-slot', value: key, checked: picked.has(key) }), ` ${s.label} ${timeText(s)}`));
+    }
+  }
+
+  function askBulk(block) {
+    const slots = [...document.querySelectorAll('.bulk-slot:checked')].map((c) => c.value);
+    const days = [...document.querySelectorAll('.bulk-day:checked')].map((c) => Number(c.value));
+    const from = $('bulkFrom').value;
+    const to = $('bulkTo').value;
+    const msg = (text, kind = 'err') => { $('bulkMsg').className = `msg ${kind}`; $('bulkMsg').textContent = text; };
+    if (!slots.length) { msg('시간대를 하나 이상 골라 주세요.'); return; }
+    if (!days.length) { msg('요일을 하나 이상 골라 주세요.'); return; }
+    if (from && to && to < from) { msg('기간의 끝 날짜가 시작 날짜보다 빠릅니다.'); return; }
+    msg('', '');
+    const range = from || to ? `${from ? shortDate(from) : '처음'} ~ ${to ? shortDate(to) : '끝'}` : '예약 기간 전체';
+    askAction({
+      title: block ? '여러 칸 한꺼번에 막기' : '여러 칸 한꺼번에 다시 열기',
+      text: `${slots.map(slotLabel).join(', ')} · ${days.map((d) => DAY_NAMES[d - 1]).join('·')}요일 · ${range}`,
+      hint: block
+        ? '예약이 이미 있는 칸과 휴무일은 건너뜁니다. 막은 칸은 학생 화면에 "마감"으로 보입니다.'
+        : '고른 칸 가운데 막혀 있던 칸을 다시 엽니다.',
+      ok: block ? '막기' : '다시 열기',
+      run: async () => {
+        const res = await api('adminBlockMany', { adminPassword: state.password, slots, days, from, to, blocked: block });
+        const skipped = res.skipped.map((b) => `${shortDate(b.date)} ${slotLabel(b.slot)} (${b.studentId} ${b.name})`);
+        msg(`${res.changed}칸을 ${block ? '막았습니다' : '다시 열었습니다'}.` +
+          (skipped.length ? ` 예약이 있어 건너뛴 칸: ${skipped.join(', ')}` : ''), 'ok');
+      },
+    });
+  }
+  $('bulkBlock').addEventListener('click', () => askBulk(true));
+  $('bulkOpen').addEventListener('click', () => askBulk(false));
 
   function askBlock(date, slot, block) {
     askAction({

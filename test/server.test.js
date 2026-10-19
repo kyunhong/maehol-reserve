@@ -159,6 +159,38 @@ test('담임이 시간대 한 칸을 막고 다시 열 수 있다 (자기 반만
   s.ok('book', { ...student(6, 1), date: '2026-10-22', slot: 'LUNCH' });
 });
 
+test('담임이 시간대 × 요일로 여러 칸을 한꺼번에 막고 연다', () => {
+  const s = setup();
+  const t6 = { cls: 6, adminPassword: 'teacher6' };
+  s.ok('book', { ...student(6, 1), date: '2026-10-21', slot: 'LUNCH' });
+  // 기본 예약 기간 10/19~11/16. 월요일 5번 + 수요일 4번 = 9칸, 그중 10/21은 예약이 있어 건너뜀
+  const res = s.ok('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [1, 3] });
+  assert.equal(res.changed, 8);
+  assert.deepEqual(res.skipped.map((b) => [b.date, b.studentId]), [['2026-10-21', '20601']]);
+  assert.equal(slotStatus(s, 6, '2026-10-26', 'LUNCH'), 'blocked');
+  assert.equal(slotStatus(s, 6, '2026-10-28', 'LUNCH'), 'blocked');
+  assert.equal(slotStatus(s, 6, '2026-10-27', 'LUNCH'), 'open'); // 화요일은 그대로
+  assert.equal(slotStatus(s, 6, '2026-10-26', 'MORNING'), 'open'); // 다른 시간대도 그대로
+  assert.equal(slotStatus(s, 7, '2026-10-26', 'LUNCH'), 'open'); // 다른 반도 그대로
+
+  // 기간을 좁혀서 수요일만 다시 열기 (10/28 하루)
+  const open = s.ok('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [3], from: '2026-10-27', to: '2026-10-29', blocked: false });
+  assert.equal(open.changed, 1);
+  assert.equal(slotStatus(s, 6, '2026-10-28', 'LUNCH'), 'open');
+  assert.equal(slotStatus(s, 6, '2026-11-04', 'LUNCH'), 'blocked');
+
+  // 화요일에 없는 시간대(AFTER_EARLY: 월·금)는 고르더라도 그 요일엔 해당 없음
+  assert.equal(s.ok('adminBlockMany', { ...t6, slots: ['AFTER_EARLY'], days: [2] }).changed, 0);
+  // 한 칸씩 막기도 그대로 동작
+  s.ok('adminBlock', { ...t6, date: '2026-10-27', slot: 'MORNING' });
+  assert.equal(slotStatus(s, 6, '2026-10-27', 'MORNING'), 'blocked');
+
+  assert.match(s.err('adminBlockMany', { ...t6, slots: [], days: [1] }), /시간대를 하나 이상/);
+  assert.match(s.err('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [] }), /요일을 하나 이상/);
+  assert.match(s.err('adminBlockMany', { ...t6, slots: ['LUNCH'], days: [1], from: '2026-11-01', to: '2026-10-30' }), /빠릅니다/);
+  assert.match(s.err('adminBlockMany', { cls: 7, adminPassword: 'teacher6', slots: ['LUNCH'], days: [1] }), /틀렸습니다/);
+});
+
 test('시간대 끝나는 시각은 선택, 있으면 시작보다 늦어야 한다', () => {
   const s = setup();
   const t6 = { cls: 6, adminPassword: 'teacher6' };

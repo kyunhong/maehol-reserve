@@ -7,7 +7,7 @@
   <title>담임 상담 예약 관리</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <div class="wrap wide">
@@ -53,6 +53,25 @@
       </div>
       <p class="summary" id="summary"></p>
       <div class="msg err" id="listMsg"></div>
+
+      <!-- 여러 칸 한꺼번에 막기·열기 (달력 보기에서만) -->
+      <details class="bulk" id="bulkPanel">
+        <summary>여러 칸 한꺼번에 막기 · 다시 열기</summary>
+        <div class="bulk-body">
+          <div class="bulk-row"><span class="bulk-label">시간대</span><div class="checks" id="bulkSlots"></div></div>
+          <div class="bulk-row"><span class="bulk-label">요일</span><div class="checks" id="bulkDays"></div></div>
+          <div class="bulk-row">
+            <span class="bulk-label">기간</span>
+            <input type="date" id="bulkFrom" aria-label="기간 시작"> <span>~</span> <input type="date" id="bulkTo" aria-label="기간 끝">
+            <span class="hint">비워 두면 예약 기간 전체</span>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn small" id="bulkOpen">다시 열기</button>
+            <button type="button" class="btn small primary" id="bulkBlock">막기</button>
+          </div>
+          <div class="msg" id="bulkMsg"></div>
+        </div>
+      </details>
       <div id="list"></div>
 
       <!-- 설정 -->
@@ -144,7 +163,7 @@
   </dialog>
 
   <script src="config.js?v=2"></script>
-  <script src="api.js?v=4"></script>
-  <script src="admin.js?v=4"></script>
+  <script src="api.js?v=5"></script>
+  <script src="admin.js?v=5"></script>
 </body>
 </html>
